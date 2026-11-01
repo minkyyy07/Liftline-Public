@@ -1,0 +1,50 @@
+# Operating System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.qodo/
+
+# Backend build output
+backend/target/
+*.class
+*.jar
+*.war
+
+# Logs and runtime files
+*.log
+*.pid
+
+# Flutter build output and caches
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.pub-cache/
+flutter_app/.pub/
+
+# Platform ephemeral & local configs
+**/local.properties
+**/Generated.xcconfig
+**/flutter_export_environment.sh
+**/ephemeral/
+
+# Secrets, certificates, and environment files
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+**/key.properties
+**/GoogleService-Info.plist
+**/google-services.json
