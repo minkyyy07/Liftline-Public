@@ -48,3 +48,6 @@ flutter_app/.pub/
 **/key.properties
 **/GoogleService-Info.plist
 **/google-services.json
+
+# Root build directory
+build/
