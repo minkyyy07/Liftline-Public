@@ -70,7 +70,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
       ),
       WorkoutsScreen(selectedDate: _selectedDate),
       NutritionScreen(selectedDate: _selectedDate, onDateChanged: _selectDate),
-      ProgressScreen(selectedDate: _selectedDate),
+      ProgressScreen(
+        selectedDate: _selectedDate,
+        onGoToTab: (i) => setState(() => _currentIndex = i),
+      ),
     ];
 
     return Scaffold(

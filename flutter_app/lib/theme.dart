@@ -42,13 +42,53 @@ ThemeData buildLiftlineTheme() {
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: LlColors.surface,
-      indicatorColor: LlColors.surfaceHigh,
+      indicatorColor: LlColors.accent.withValues(alpha: 0.15),
+      iconTheme: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return const IconThemeData(color: LlColors.accent, size: 24);
+        }
+        return const IconThemeData(color: LlColors.textSecondary, size: 24);
+      }),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.selected)) {
+          return const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: LlColors.accent,
+          );
+        }
+        return const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: LlColors.textSecondary,
+        );
+      }),
+    ),
+    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      backgroundColor: LlColors.accent,
+      foregroundColor: Color(0xFF03130A),
     ),
     filledButtonTheme: FilledButtonThemeData(
-      style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(48, 48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
-      style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(48, 48),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(
+        minimumSize: const Size(48, 48),
+      ),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        minimumSize: const Size(48, 48),
+      ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,

@@ -6,6 +6,8 @@ import com.liftline.app.dto.AuthRequest;
 import com.liftline.app.entity.User;
 import com.liftline.app.repository.UserRepository;
 import com.liftline.app.security.JwtService;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -366,5 +370,109 @@ class AuthAndIsolationTests {
         mockMvc.perform(get("/api/workouts")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("Complete end-to-end registration and login flow via MockMvc with JWT verification")
+    void fullRegistrationAndLoginFlowViaMockMvc() throws Exception {
+        String email = "e2e.flow@example.com";
+        String password = "securePassword123";
+
+        // 1. Register via MockMvc
+        AuthRequest registerRequest = new AuthRequest();
+        registerRequest.setEmail(email);
+        registerRequest.setPassword(password);
+
+        mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(registerRequest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("User registered successfully"));
+
+        // 2. Login via MockMvc with registered credentials
+        AuthRequest loginRequest = new AuthRequest();
+        loginRequest.setEmail(email);
+        loginRequest.setPassword(password);
+
+        MvcResult loginResult = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(loginRequest)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").isString())
+                .andExpect(jsonPath("$.email").value(email))
+                .andReturn();
+
+        // 3. Extract and verify JWT
+        JsonNode responseNode = objectMapper.readTree(loginResult.getResponse().getContentAsString());
+        String token = responseNode.get("token").asText();
+        assertThat(token).isNotBlank();
+
+        UUID userId = jwtService.parseUserId(token);
+        assertThat(userId).isNotNull();
+        assertThat(jwtService.parseEmail(token)).isEqualTo(email);
+
+        User registeredUser = userRepository.findByEmail(email).orElse(null);
+        assertThat(registeredUser).isNotNull();
+        assertThat(registeredUser.getId()).isEqualTo(userId);
+
+        // 4. Access protected endpoint using the extracted JWT
+        mockMvc.perform(get("/api/workouts")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound()); // Authenticated (passed 401/403 filter), 404 because workouts controller is not yet implemented
+    }
+
+    @Test
+    @DisplayName("Login rejects invalid payloads (malformed email, blank password, malformed JSON)")
+    void loginWithInvalidDataShouldReturnBadRequest() throws Exception {
+        // Malformed email
+        AuthRequest badEmail = new AuthRequest();
+        badEmail.setEmail("not-a-valid-email");
+        badEmail.setPassword("validPass123");
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(badEmail)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Validation failed"))
+                .andExpect(jsonPath("$.details.email").exists());
+
+        // Blank password
+        AuthRequest emptyPassword = new AuthRequest();
+        emptyPassword.setEmail("valid@example.com");
+        emptyPassword.setPassword("");
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(emptyPassword)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Validation failed"))
+                .andExpect(jsonPath("$.details.password").exists());
+
+        // Malformed JSON syntax
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{invalid-json-body}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("JWT parser rejects tokens signed with untrusted secret key")
+    void jwtVerificationRejectsUntrustedKey() {
+        User user = new User("untrusted@example.com", passwordEncoder.encode("secret12345"));
+        user = userRepository.save(user);
+
+        // Create token with different valid 32-byte secret
+        SecretKey differentKey = Keys.hmacShaKeyFor(
+                "different-secret-key-that-is-at-least-32-bytes!".getBytes(StandardCharsets.UTF_8)
+        );
+
+        String untrustedToken = Jwts.builder()
+                .subject(user.getId().toString())
+                .claim("email", user.getEmail())
+                .signWith(differentKey)
+                .compact();
+
+        assertThatThrownBy(() -> jwtService.parseUserId(untrustedToken))
+                .isInstanceOf(Exception.class);
     }
 }

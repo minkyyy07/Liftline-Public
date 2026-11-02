@@ -7,6 +7,7 @@ A fitness tracker product codebase with Flutter client and Spring Boot backend.
 ### Storage & Synchronization Status (Important)
 - **Client (Flutter)**: Currently stores all workout and nutrition records in a **local SQLite database** (`liftline.db`).
 - **Backend (Spring Boot)**: Currently implements **authentication only** (`/api/auth/register`, `/api/auth/login`). There are **no workout or nutrition REST API endpoints** implemented on the backend.
+- **User Data Isolation**: Because the workout and nutrition REST APIs are **not yet implemented**, user data isolation across multiple accounts is **NOT verified or testable at the API level**.
 - **Data Synchronization**: Cloud synchronization across devices is **NOT implemented**. Flutter does not send workout or nutrition data to the backend.
 
 #### Architectural Blocker & Proposal for Account / Cloud Sync:
@@ -49,10 +50,9 @@ If cross-device synchronization and user accounts for workouts and nutrition are
     2. During a transition period, authenticate logins by truncating to 72 bytes if matching the legacy hash, and prompt the user to update their password within the valid byte limit.
 - **Concurrency & Race Condition Protection**:
   - Registration is protected against simultaneous duplicate email registration: catches unique constraint violations (`DataIntegrityViolationException`) and returns HTTP 400 Bad Request (`{"error": "Email already registered"}`) rather than HTTP 500.
-- **Data Ownership Boundaries (`WorkoutService`)**:
-  - All operations are strictly owner-scoped. The service derives user identity directly from Spring Security's `SecurityContextHolder` (`getCurrentUserWorkouts`, `createWorkoutForCurrentUser`, `updateWorkoutForCurrentUser`, `deleteWorkoutForCurrentUser`) or enforces an explicit `ownerId` matched against the database (`findByIdAndUserId`).
-  - Client requests cannot pass arbitrary `userId` to manipulate other users' data.
-  - Unauthorized access attempts throw `AccessDeniedException`.
+- **Service-Level Data Ownership (`WorkoutService`)**:
+  - The internal service layer methods enforce owner-scoped access (`getCurrentUserWorkouts`, `createWorkoutForCurrentUser`, `updateWorkoutForCurrentUser`, `deleteWorkoutForCurrentUser`) and reject mismatched `ownerId` (`AccessDeniedException`).
+  - *Important limitation*: Because workout and nutrition REST controllers/endpoints are not yet implemented on the backend, **user data isolation has NOT been verified at the HTTP / REST API level** (only internal service-layer logic is verified).
 - **Database Configuration & Production Hardening**:
   - Insecure production fallbacks (such as default `root` user, empty password, or unencrypted MySQL) are completely removed.
   - `DatabaseSecurityValidator` verifies on startup that required production parameters are set, rejecting the `root` user and enforcing verified TLS for remote MySQL.
@@ -149,23 +149,28 @@ cd backend
 mvn clean test
 ```
 
-### Test Suite Coverage (28 automated tests):
-1. **`AuthAndIsolationTests` (10 tests)**:
-   - Valid registration and BCrypt password hash verification.
-   - Valid login, JWT issuance, and claim parsing.
+### Test Suite Coverage (34 automated tests):
+1. **`AuthAndIsolationTests` (13 MockMvc tests)**:
+   - Valid registration and BCrypt password hash verification (`POST /api/auth/register`).
+   - Valid login, JWT issuance, and claim parsing (`POST /api/auth/login`).
+   - Full end-to-end registration -> login -> JWT claim extraction -> protected endpoint access flow via MockMvc.
    - Password boundary tests: < 8 chars (rejected), 8 chars (accepted), 72 ASCII bytes (accepted), 73 ASCII bytes (rejected), multi-byte UTF-8 > 72 bytes (rejected), multi-byte UTF-8 <= 72 bytes (accepted).
-   - Duplicate email registration rejection with case insensitivity.
+   - Duplicate email registration rejection with case insensitivity (HTTP 400).
    - Concurrent registration race condition: 10 parallel threads simultaneously registering the same email — exactly 1 succeeds (200), remaining 9 receive 400 Bad Request, zero 500 errors.
-   - Invalid request payloads (email format, blank fields).
-   - Login with wrong password (401) and non-existent user (401).
-   - JWT tampering and claims validation.
-   - Protected endpoint authorization filter.
-2. **`WorkoutServiceOwnershipTest` (5 tests)**:
+   - Invalid registration payloads (malformed email, short password, blank fields).
+   - Invalid login payloads (malformed email, blank password, malformed JSON body).
+   - Login with wrong password (401 Unauthorized) and non-existent user (401 Unauthorized).
+   - JWT tampering detection and signature verification.
+   - JWT parser rejection of untrusted secret signing keys.
+   - Protected endpoint authorization filter (unauthenticated requests rejected with 403 Forbidden; authenticated Bearer tokens pass filter).
+   - *(Note: User data isolation across different users is NOT tested here because workouts/nutrition REST endpoints are not yet implemented).*
+2. **`WorkoutServiceOwnershipTest` (5 service-layer tests)**:
    - User B cannot read User A's workout (`AccessDeniedException`).
    - User B cannot update User A's workout (`AccessDeniedException`).
    - User B cannot delete User A's workout (`AccessDeniedException`).
    - Owner can read, update, and delete their own workout.
    - Owner-scoped programmatic methods reject mismatched `ownerId`.
+   - *(Note: This tests internal service logic only; API-level isolation cannot be tested until REST controllers are added).*
 3. **`DatabaseSecurityValidatorTest` (8 tests)**:
    - Dev and test profiles bypass production checks.
    - In-memory H2 URLs bypass production checks.
@@ -173,17 +178,21 @@ mvn clean test
    - Prohibits `root` username in production.
    - Rejects unencrypted remote MySQL connections (`useSSL=false` / `sslMode=disabled`).
    - Accepts remote MySQL with verified TLS (`sslMode=VERIFY_IDENTITY`).
-4. **`JwtSecretValidationTest` (5 tests)**:
+4. **`JwtSecretValidationTest` (8 tests)**:
    - Rejects null, blank, and < 32-byte JWT secrets with descriptive messages.
    - Accepts >= 32-byte secrets.
    - Constructor validation in `JwtService`.
+   - Application context startup fails when `jwt.secret` is missing/empty.
+   - Application context startup fails when `jwt.secret` is shorter than 32 bytes.
+   - Application context startup succeeds when `jwt.secret` is >= 32 bytes.
 
 ---
 
 ## Verification Status
 
 - **Backend Compile**: Passed (`mvn -f backend/pom.xml compile`)
-- **Backend Tests**: Passed (`mvn -f backend/pom.xml clean test` — 28/28 tests passed)
-- **Local Startup Verification**: Verified with `dev` profile via packaged JAR and curl tests.
+- **Backend Tests**: Passed (`mvn -f backend/pom.xml test` — 34/34 tests passed)
+- **Local Startup Verification**: Verified with `dev` profile via packaged JAR and curl tests (registration, duplicate rejection, login, JWT validation).
+- **User Isolation Status**: User data isolation at the HTTP / REST API level is **NOT verified** because workout and nutrition REST controllers/endpoints are not yet implemented.
 - **Production Startup Security**: Verified that production startup halts with clear messages if `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, or TLS settings are missing or insecure.
 - **Flutter Build / Analyzer / Tests**: **Not executed in this environment** because neither Flutter SDK nor Dart CLI is installed on this machine (`flutter: command not found`, `dart: command not found`). The validation logic and test files (`flutter_app/lib/validators.dart`, `flutter_app/test/validators_test.dart`) have been implemented following Flutter and Dart SDK conventions.

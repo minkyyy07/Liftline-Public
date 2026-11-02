@@ -113,20 +113,54 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
               ? const Center(child: CircularProgressIndicator())
               : _list.isEmpty
                   ? Center(
-                      child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.fitness_center, size: 64, color: LlColors.textSecondary),
-                      const SizedBox(height: 12),
-                      const Text('Тренировок пока нет'),
-                      const SizedBox(height: 12),
-                      FilledButton.icon(
-                          onPressed: _create,
-                          icon: const Icon(Icons.add),
-                          label: const Text('Новая тренировка')),
-                    ]))
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: const BoxDecoration(
+                                color: LlColors.surfaceHigh,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.fitness_center,
+                                size: 48,
+                                color: LlColors.accent,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Тренировок пока нет',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Создайте первую тренировку, чтобы планировать упражнения и фиксировать рабочие подходы.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: LlColors.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            FilledButton.icon(
+                              onPressed: _create,
+                              icon: const Icon(Icons.add),
+                              label: const Text('Создать тренировку'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
                   : RefreshIndicator(
                       onRefresh: _load,
                       child: ListView(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                         children: [
                           for (final w in active)
                             Padding(

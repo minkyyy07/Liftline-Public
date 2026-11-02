@@ -120,7 +120,7 @@ void main() {
         ),
       ),
     ));
-    expect(find.text('На 300 ккал выше цели'), findsOneWidget);
+    expect(find.text('Сверх цели: 300 ккал'), findsOneWidget);
     expect(find.textContaining('Осталось'), findsNothing);
   });
 

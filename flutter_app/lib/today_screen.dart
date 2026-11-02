@@ -96,6 +96,21 @@ class _TodayScreenState extends State<TodayScreen> {
     }
   }
 
+  Future<void> _addFood() async {
+    final meal = await showMealPickerSheet(context);
+    if (meal == null || !mounted) return;
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EntryFormScreen(
+          date: widget.selectedDate,
+          meal: meal,
+        ),
+      ),
+    );
+    if (saved == true) _load();
+  }
+
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -123,7 +138,7 @@ class _TodayScreenState extends State<TodayScreen> {
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
           children: [
             if (_active != null) ...[
               Card(
@@ -163,23 +178,50 @@ class _TodayScreenState extends State<TodayScreen> {
               _workoutsSection(),
             ],
             const SizedBox(height: 16),
-            Row(children: [
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () => widget.onGoToTab(1),
-                  icon: const Icon(Icons.fitness_center),
-                  label: const Text('Тренировки'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => widget.onGoToTab(2),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Добавить еду'),
-                ),
-              ),
-            ]),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth < 320) {
+                  return Column(
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () => widget.onGoToTab(1),
+                          icon: const Icon(Icons.fitness_center),
+                          label: const Text('Тренировки'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _addFood,
+                          icon: const Icon(Icons.add),
+                          label: const Text('Добавить еду'),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Row(children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: () => widget.onGoToTab(1),
+                      icon: const Icon(Icons.fitness_center),
+                      label: const Text('Тренировки'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _addFood,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Добавить еду'),
+                    ),
+                  ),
+                ]);
+              },
+            ),
           ],
         ),
       ),
@@ -288,9 +330,10 @@ class _TodayScreenState extends State<TodayScreen> {
         if (_entries == 0)
           Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: OutlinedButton(
-              onPressed: () => widget.onGoToTab(2),
-              child: const Text('Добавить еду'),
+            child: OutlinedButton.icon(
+              onPressed: _addFood,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Добавить еду'),
             ),
           ),
       ],
@@ -307,20 +350,60 @@ class _TodayScreenState extends State<TodayScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         Card(
-          child: ListTile(
-            title: Text(w == null
-                ? 'Измерений до этой даты нет'
-                : '${fmtG((w['kg'] as num).toDouble())} кг'),
-            subtitle: w == null
-                ? null
-                : Text(isDay
-                    ? 'Измерение за этот день'
-                    : 'Последнее измерение: ${DateFormat('d MMM yyyy', 'ru').format(DateTime.parse(w['date'] as String))}'),
-            trailing: TextButton(
-              onPressed: () async {
-                if (await showWeightDialog(context, date: widget.selectedDate)) _load();
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final isNarrow = constraints.maxWidth < 280;
+                final info = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      w == null
+                          ? 'Измерений до этой даты нет'
+                          : '${fmtG((w['kg'] as num).toDouble())} кг',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    if (w != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        isDay
+                            ? 'Измерение за этот день'
+                            : 'Последнее: ${DateFormat('d MMM yyyy', 'ru').format(DateTime.parse(w['date'] as String))}',
+                        style: const TextStyle(
+                            fontSize: 12, color: LlColors.textSecondary),
+                      ),
+                    ],
+                  ],
+                );
+                final btn = TextButton(
+                  onPressed: () async {
+                    if (await showWeightDialog(context,
+                        date: widget.selectedDate)) _load();
+                  },
+                  child: const Text('Записать вес'),
+                );
+
+                if (isNarrow) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      info,
+                      const SizedBox(height: 8),
+                      Align(alignment: Alignment.centerRight, child: btn),
+                    ],
+                  );
+                }
+                return Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(child: info),
+                    const SizedBox(width: 8),
+                    btn,
+                  ],
+                );
               },
-              child: const Text('Записать вес'),
             ),
           ),
         ),

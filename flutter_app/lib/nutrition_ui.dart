@@ -100,6 +100,52 @@ class _GoalsDialogState extends State<_GoalsDialog> {
   }
 }
 
+IconData mealIcon(String meal) => switch (meal) {
+      'breakfast' => Icons.wb_sunny_outlined,
+      'lunch' => Icons.lunch_dining_outlined,
+      'dinner' => Icons.dinner_dining_outlined,
+      _ => Icons.cookie_outlined,
+    };
+
+/// Shows a bottom sheet to explicitly pick a meal category before adding food.
+/// Returns null if cancelled.
+Future<String?> showMealPickerSheet(BuildContext context) {
+  return showModalBottomSheet<String>(
+    context: context,
+    backgroundColor: LlColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text(
+                'Выберите приём пищи',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+            for (final m in kMeals)
+              ListTile(
+                leading: Icon(mealIcon(m), color: LlColors.accent),
+                title: Text(kMealLabels[m] ?? m,
+                    style: const TextStyle(fontWeight: FontWeight.w500)),
+                trailing: const Icon(Icons.chevron_right,
+                    color: LlColors.textSecondary),
+                onTap: () => Navigator.pop(ctx, m),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 // ====================== Экран питания ======================
 class NutritionScreen extends StatefulWidget {
   final DateTime selectedDate;
@@ -220,7 +266,12 @@ class _NutritionScreenState extends State<NutritionScreen> {
                   ),
                 ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openForm(),
+        onPressed: () async {
+          final meal = await showMealPickerSheet(context);
+          if (meal != null && mounted) {
+            _openForm(meal: meal);
+          }
+        },
         icon: const Icon(Icons.add),
         label: const Text('Добавить еду'),
       ),
@@ -302,7 +353,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
   }
 }
 
-/// Totals vs. goals. Over-goal is stated calmly, never as negative "left".
+/// Totals vs. goals card. Consistent across "Сегодня" and "Питание".
 class NutritionSummaryCard extends StatelessWidget {
   final Nutrients totals;
   final NutritionGoals goals;
@@ -318,49 +369,125 @@ class NutritionSummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final gk = goals.calories;
-    String? balance;
-    double? progress;
-    if (gk != null) {
-      final b = calorieBalance(totals.kcal, gk);
-      balance = b.over > 0
-          ? 'На ${fmtKcal(b.over)} ккал выше цели'
-          : 'Осталось ${fmtKcal(b.remaining)} ккал';
-      progress = (totals.kcal / gk).clamp(0.0, 1.0);
-    }
-    Widget macro(String label, double v, double? goal, Color c) => Column(children: [
-          Text(goal == null ? '${fmtG(v)} г' : '${fmtG(v)} / ${fmtG(goal)} г',
-              style: TextStyle(fontWeight: FontWeight.bold, color: c)),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(fontSize: 12, color: LlColors.textSecondary)),
-        ]);
+    final hasGoal = gk != null;
+
+    Widget macro(String label, double v, double? goal, Color c) => Expanded(
+          child: Column(
+            children: [
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  goal == null ? '${fmtG(v)} г' : '${fmtG(v)} / ${fmtG(goal)} г',
+                  style: TextStyle(fontWeight: FontWeight.bold, color: c, fontSize: 15),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(label, style: const TextStyle(fontSize: 12, color: LlColors.textSecondary)),
+            ],
+          ),
+        );
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: SizedBox(
           width: double.infinity,
-          child: Column(children: [
-            Text(
-                gk == null
-                    ? '${fmtKcal(totals.kcal)} ккал съедено'
-                    : '${fmtKcal(totals.kcal)} из ${fmtKcal(gk)} ккал',
-                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: LlColors.accent)),
-            if (balance != null) ...[
-              const SizedBox(height: 4),
-              Text(balance),
-              const SizedBox(height: 8),
-              LinearProgressIndicator(value: progress, minHeight: 6),
+          child: Column(
+            children: [
+              if (!hasGoal) ...[
+                Text(
+                  '${fmtKcal(totals.kcal)} ккал съедено',
+                  style: const TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
+                    color: LlColors.accent,
+                  ),
+                ),
+              ] else ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text(
+                      fmtKcal(totals.kcal),
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: LlColors.accent,
+                      ),
+                    ),
+                    Text(
+                      ' / ${fmtKcal(gk)} ккал',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        color: LlColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Builder(builder: (_) {
+                  final b = calorieBalance(totals.kcal, gk);
+                  final isOver = b.over > 0;
+                  final progress = (totals.kcal / gk).clamp(0.0, 1.0);
+                  return Column(
+                    children: [
+                      Text(
+                        isOver
+                            ? 'Сверх цели: ${fmtKcal(b.over)} ккал'
+                            : (b.remaining == 0
+                                ? 'Цель достигнута'
+                                : 'Осталось: ${fmtKcal(b.remaining)} ккал'),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: isOver ? LlColors.warning : LlColors.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: progress,
+                          minHeight: 6,
+                          color: isOver ? LlColors.warning : LlColors.accent,
+                          backgroundColor: LlColors.surfaceHigh,
+                        ),
+                      ),
+                    ],
+                  );
+                }),
+              ],
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  macro('Белки', totals.protein, goals.protein, LlColors.secondary),
+                  macro('Жиры', totals.fat, goals.fat, LlColors.warning),
+                  macro('Углеводы', totals.carbs, goals.carbs, LlColors.accent),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (!hasGoal)
+                OutlinedButton.icon(
+                  onPressed: onSetGoals,
+                  icon: const Icon(Icons.flag_outlined, size: 18),
+                  label: const Text('Задать цель'),
+                )
+              else
+                TextButton.icon(
+                  onPressed: onSetGoals,
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  label: const Text('Изменить цели'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: LlColors.textSecondary,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
             ],
-            const SizedBox(height: 12),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-              macro('Белки', totals.protein, goals.protein, LlColors.secondary),
-              macro('Жиры', totals.fat, goals.fat, LlColors.warning),
-              macro('Углеводы', totals.carbs, goals.carbs, LlColors.accent),
-            ]),
-            if (!goals.any) ...[
-              const SizedBox(height: 8),
-              TextButton(onPressed: onSetGoals, child: const Text('Задать цель')),
-            ],
-          ]),
+          ),
         ),
       ),
     );

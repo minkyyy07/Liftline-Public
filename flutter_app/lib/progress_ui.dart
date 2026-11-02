@@ -143,7 +143,8 @@ class _WeightDialogState extends State<_WeightDialog> {
 // ====================== Прогресс ======================
 class ProgressScreen extends StatefulWidget {
   final DateTime selectedDate;
-  const ProgressScreen({super.key, required this.selectedDate});
+  final ValueChanged<int>? onGoToTab;
+  const ProgressScreen({super.key, required this.selectedDate, this.onGoToTab});
   @override
   State<ProgressScreen> createState() => _ProgressScreenState();
 }
@@ -170,9 +171,18 @@ class _ProgressScreenState extends State<ProgressScreen> {
         ),
         Expanded(
           child: switch (_tab) {
-            'weight' => WeightTab(key: ValueKey(widget.selectedDate), end: widget.selectedDate),
-            'nutrition' => NutritionWeekTab(key: ValueKey(widget.selectedDate), end: widget.selectedDate),
-            _ => StrengthTab(key: ValueKey(widget.selectedDate), end: widget.selectedDate),
+            'weight' => WeightTab(
+                key: ValueKey(widget.selectedDate),
+                end: widget.selectedDate,
+                onGoToTab: widget.onGoToTab),
+            'nutrition' => NutritionWeekTab(
+                key: ValueKey(widget.selectedDate),
+                end: widget.selectedDate,
+                onGoToTab: widget.onGoToTab),
+            _ => StrengthTab(
+                key: ValueKey(widget.selectedDate),
+                end: widget.selectedDate,
+                onGoToTab: widget.onGoToTab),
           },
         ),
       ]),
@@ -197,7 +207,8 @@ const _periodHint =
 // ---------- силовые ----------
 class StrengthTab extends StatefulWidget {
   final DateTime end;
-  const StrengthTab({super.key, required this.end});
+  final ValueChanged<int>? onGoToTab;
+  const StrengthTab({super.key, required this.end, this.onGoToTab});
   @override
   State<StrengthTab> createState() => _StrengthTabState();
 }
@@ -251,12 +262,46 @@ class _StrengthTabState extends State<StrengthTab> {
     }
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_exs.isEmpty) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text('Нет данных. Завершите тренировку с выполненными рабочими подходами — '
-              'после этого здесь появятся графики. Активные тренировки в историю не входят.',
-              textAlign: TextAlign.center),
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  color: LlColors.surfaceHigh,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.show_chart,
+                  size: 48,
+                  color: LlColors.accent,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Нет данных для силового прогресса',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Завершите тренировку с выполненными рабочими подходами — после этого здесь появятся графики. Активные тренировки в историю не входят.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: LlColors.textSecondary),
+              ),
+              if (widget.onGoToTab != null) ...[
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  onPressed: () => widget.onGoToTab!(1),
+                  icon: const Icon(Icons.fitness_center),
+                  label: const Text('Перейти к тренировкам'),
+                ),
+              ],
+            ],
+          ),
         ),
       );
     }
@@ -271,7 +316,7 @@ class _StrengthTabState extends State<StrengthTab> {
       if (best == null || p.value > best.value) best = p;
     }
     final change = _metric == 'e1rm' ? changePercent(pts.map((p) => p.value).toList()) : null;
-    return ListView(padding: const EdgeInsets.all(16), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 32), children: [
       DropdownButtonFormField<String>(
         value: _ref,
         isExpanded: true,
@@ -299,10 +344,26 @@ class _StrengthTabState extends State<StrengthTab> {
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Text(_metric == 'vol'
-                ? 'В выбранном периоде нет завершённых тренировок с рабочими подходами.'
-                : 'Нет подходящих данных за период. Для e1RM и лучшего веса нужны выполненные рабочие подходы '
-                    'с внешним весом (e1RM — до 10 повторений).'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _metric == 'vol'
+                      ? 'В выбранном периоде нет завершённых тренировок с рабочими подходами.'
+                      : 'Нет подходящих данных за период. Для e1RM и лучшего веса нужны выполненные рабочие подходы '
+                          'с внешним весом (e1RM — до 10 повторений).',
+                  style: const TextStyle(color: LlColors.textSecondary),
+                ),
+                if (widget.onGoToTab != null) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => widget.onGoToTab!(1),
+                    icon: const Icon(Icons.fitness_center, size: 18),
+                    label: const Text('Перейти к тренировкам'),
+                  ),
+                ],
+              ],
+            ),
           ),
         )
       else ...[
@@ -350,7 +411,8 @@ class _StrengthTabState extends State<StrengthTab> {
 // ---------- вес тела ----------
 class WeightTab extends StatefulWidget {
   final DateTime end;
-  const WeightTab({super.key, required this.end});
+  final ValueChanged<int>? onGoToTab;
+  const WeightTab({super.key, required this.end, this.onGoToTab});
   @override
   State<WeightTab> createState() => _WeightTabState();
 }
@@ -389,6 +451,48 @@ class _WeightTabState extends State<WeightTab> {
       ]));
     }
     if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_rows.isEmpty) {
+      return Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  color: LlColors.surfaceHigh,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.monitor_weight_outlined,
+                  size: 48,
+                  color: LlColors.accent,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'В истории измерений нет',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Записывайте вес тела, чтобы видеть график динамики и 7-дневный скользящий тренд.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: LlColors.textSecondary),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: () => _edit(),
+                icon: const Icon(Icons.add),
+                label: const Text('Записать вес'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     final all = [
       for (final r in _rows)
         WeightPoint(DateTime.parse(r['date'] as String), (r['kg'] as num).toDouble())
@@ -399,7 +503,7 @@ class _WeightTabState extends State<WeightTab> {
       for (final p in win)
         if (movingAverage(all, p.date) != null) ChartPt(p.date, movingAverage(all, p.date)!.avg)
     ];
-    return ListView(padding: const EdgeInsets.all(16), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 32), children: [
       FilledButton.icon(
           onPressed: () => _edit(),
           icon: const Icon(Icons.add),
@@ -408,11 +512,25 @@ class _WeightTabState extends State<WeightTab> {
       _periodChips(_period, (p) => setState(() => _period = p)),
       const SizedBox(height: 12),
       if (win.isEmpty)
-        const Card(
+        Card(
           child: Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('В выбранном периоде измерений нет. Запишите вес — тренд появится, '
-                'когда в 7-дневном окне будет минимум 3 измерения.'),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'В выбранном периоде измерений нет. Запишите вес для этой даты — тренд появится, '
+                  'когда в 7-дневном окне будет минимум 3 измерения.',
+                  style: TextStyle(color: LlColors.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => _edit(),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Записать вес'),
+                ),
+              ],
+            ),
           ),
         )
       else ...[
@@ -464,7 +582,8 @@ class _WeightTabState extends State<WeightTab> {
 // ---------- питание за неделю ----------
 class NutritionWeekTab extends StatefulWidget {
   final DateTime end;
-  const NutritionWeekTab({super.key, required this.end});
+  final ValueChanged<int>? onGoToTab;
+  const NutritionWeekTab({super.key, required this.end, this.onGoToTab});
   @override
   State<NutritionWeekTab> createState() => _NutritionWeekTabState();
 }
@@ -493,11 +612,37 @@ class _NutritionWeekTabState extends State<NutritionWeekTab> {
     double avgOf(double Function(Nutrients) f) =>
         withEntries.isEmpty ? 0 : withEntries.map((d) => f(d.totals!)).reduce((a, b) => a + b) / withEntries.length;
     final fmt = DateFormat('E d MMM', 'ru');
-    return ListView(padding: const EdgeInsets.all(16), children: [
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 16, 16, 32), children: [
       Text('Неделя по ${_dFmt.format(widget.end)} (7 дней)', style: const TextStyle(fontWeight: FontWeight.bold)),
       const SizedBox(height: 8),
       if (avg == null)
-        const Card(child: Padding(padding: EdgeInsets.all(16), child: Text('За эти 7 дней записей питания нет.')))
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'За эти 7 дней записей питания нет',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Ведите дневник питания, чтобы видеть среднюю калорийность, баланс БЖУ и соблюдение целей за неделю.',
+                  style: TextStyle(color: LlColors.textSecondary),
+                ),
+                if (widget.onGoToTab != null) ...[
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => widget.onGoToTab!(2),
+                    icon: const Icon(Icons.restaurant, size: 18),
+                    label: const Text('Перейти к питанию'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        )
       else
         Card(
           child: Padding(
