@@ -27,8 +27,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _midnightCheck =
-        Timer.periodic(const Duration(minutes: 1), (_) => _syncToday());
+    _midnightCheck = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _syncToday(),
+    );
   }
 
   @override
@@ -76,33 +78,42 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
       ),
     ];
 
-    return Scaffold(
-      body: IndexedStack(index: _currentIndex, children: screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.today_outlined),
-            selectedIcon: Icon(Icons.today),
-            label: 'Сегодня',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.fitness_center_outlined),
-            selectedIcon: Icon(Icons.fitness_center),
-            label: 'Тренировки',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.restaurant_outlined),
-            selectedIcon: Icon(Icons.restaurant),
-            label: 'Питание',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.show_chart_outlined),
-            selectedIcon: Icon(Icons.show_chart),
-            label: 'Прогресс',
-          ),
-        ],
+    return PopScope(
+      canPop: _currentIndex == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_currentIndex != 0) {
+          setState(() => _currentIndex = 0);
+        }
+      },
+      child: Scaffold(
+        body: IndexedStack(index: _currentIndex, children: screens),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _currentIndex,
+          onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.today_outlined),
+              selectedIcon: Icon(Icons.today),
+              label: 'Сегодня',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.fitness_center_outlined),
+              selectedIcon: Icon(Icons.fitness_center),
+              label: 'Тренировки',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.restaurant_outlined),
+              selectedIcon: Icon(Icons.restaurant),
+              label: 'Питание',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.show_chart_outlined),
+              selectedIcon: Icon(Icons.show_chart),
+              label: 'Прогресс',
+            ),
+          ],
+        ),
       ),
     );
   }

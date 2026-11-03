@@ -23,7 +23,10 @@ void main() {
     await initializeDateFormatting('ru');
     late ProgressRepo r;
     await t.runAsync(() async {
-      final db = await openLiftlineDb(inMemoryDatabasePath, factory: databaseFactoryFfi);
+      final db = await openLiftlineDb(
+        inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+      );
       AppDb.instance.useDatabase(db);
       r = ProgressRepo(db);
     });
@@ -32,9 +35,13 @@ void main() {
     return r;
   }
 
-  testWidgets('weight tab: empty state, add, insufficient-data dashes',
-      (t) async {
-    final repo = await setup(t, Scaffold(body: WeightTab(end: DateTime(2026, 5, 20))));
+  testWidgets('weight tab: empty state, add, insufficient-data dashes', (
+    t,
+  ) async {
+    final repo = await setup(
+      t,
+      Scaffold(body: WeightTab(end: DateTime(2026, 5, 20))),
+    );
     expect(find.textContaining('измерений нет'), findsOneWidget);
     await t.tap(find.text('Записать вес'));
     await t.pumpAndSettle();
@@ -54,22 +61,27 @@ void main() {
     await t.runAsync(() => AppDb.instance.db.close());
   });
 
-  testWidgets('chart: single point draws, no crash; shows selected value',
-      (t) async {
+  testWidgets('chart: single point draws, no crash; shows selected value', (
+    t,
+  ) async {
     await initializeDateFormatting('ru');
-    await t.pumpWidget(MaterialApp(
-      theme: buildLiftlineTheme(),
-      home: Scaffold(
-        body: LineChartView(points: [ChartPt(DateTime(2026, 5, 1), 80)], unit: 'кг'),
+    await t.pumpWidget(
+      MaterialApp(
+        theme: buildLiftlineTheme(),
+        home: Scaffold(
+          body: LineChartView(
+            points: [ChartPt(DateTime(2026, 5, 1), 80)],
+            unit: 'кг',
+          ),
+        ),
       ),
-    ));
+    );
     await t.tap(find.byType(CustomPaint).last, warnIfMissed: false);
     await t.pump();
     expect(noException(t), isTrue);
   });
 
-  testWidgets('strength tab: no finished sessions -> explanation',
-      (t) async {
+  testWidgets('strength tab: no finished sessions -> explanation', (t) async {
     await setup(t, Scaffold(body: StrengthTab(end: DateTime(2026, 5, 20))));
     expect(find.textContaining('Завершите тренировку'), findsOneWidget);
     await t.runAsync(() => AppDb.instance.db.close());

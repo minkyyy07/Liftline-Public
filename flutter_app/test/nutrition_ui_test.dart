@@ -24,20 +24,27 @@ void main() {
     addTearDown(t.view.reset);
     await initializeDateFormatting('ru');
     await t.runAsync(() async {
-      final db = await openLiftlineDb(inMemoryDatabasePath, factory: databaseFactoryFfi);
+      final db = await openLiftlineDb(
+        inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+      );
       AppDb.instance.useDatabase(db);
       repo = NutritionRepo(db);
     });
-    await t.pumpWidget(MaterialApp(
+    await t.pumpWidget(
+      MaterialApp(
         theme: buildLiftlineTheme(),
-        home: EntryFormScreen(date: date)));
+        home: EntryFormScreen(date: date),
+      ),
+    );
     await settle(t);
   }
 
   Finder field(String label) => find.widgetWithText(TextFormField, label);
 
-  testWidgets('product mode: live preview and save 150 g -> 300 kcal',
-      (t) async {
+  testWidgets('product mode: live preview and save 150 g -> 300 kcal', (
+    t,
+  ) async {
     await open(t);
     await t.enterText(field('Название *'), 'Рис');
     await t.enterText(field('Съеденная масса, г *'), '150');
@@ -57,8 +64,9 @@ void main() {
     await t.runAsync(() => AppDb.instance.db.close());
   });
 
-  testWidgets('portion mode saves values as entered, no mass needed',
-      (t) async {
+  testWidgets('portion mode saves values as entered, no mass needed', (
+    t,
+  ) async {
     await open(t);
     await t.tap(find.text('Быстрая порция'));
     await t.pump();
@@ -71,7 +79,10 @@ void main() {
     await t.tap(find.text('Добавить').last);
     await settle(t);
     final e = (await t.runAsync(() => repo.day('2026-05-10')))!.single;
-    expect((e['calories'], e['protein'], e['fat'], e['carbs']), (500, 30, 20, 40));
+    expect(
+      (e['calories'], e['protein'], e['fat'], e['carbs']),
+      (500, 30, 20, 40),
+    );
     expect(e['grams'], isNull);
     await t.runAsync(() => AppDb.instance.db.close());
   });
@@ -107,35 +118,40 @@ void main() {
     await t.runAsync(() => AppDb.instance.db.close());
   });
 
-  testWidgets('summary: over goal is stated calmly, not negative remaining',
-      (t) async {
-    await t.pumpWidget(MaterialApp(
-      theme: buildLiftlineTheme(),
-      home: Scaffold(
-        body: NutritionSummaryCard(
-          totals: const Nutrients(2300, 100, 50, 200),
-          goals: const NutritionGoals(2000, null, null, null),
-          hasEntries: true,
-          onSetGoals: () {},
+  testWidgets('summary: over goal is stated calmly, not negative remaining', (
+    t,
+  ) async {
+    await t.pumpWidget(
+      MaterialApp(
+        theme: buildLiftlineTheme(),
+        home: Scaffold(
+          body: NutritionSummaryCard(
+            totals: const Nutrients(2300, 100, 50, 200),
+            goals: const NutritionGoals(2000, null, null, null),
+            hasEntries: true,
+            onSetGoals: () {},
+          ),
         ),
       ),
-    ));
+    );
     expect(find.text('Сверх цели: 300 ккал'), findsOneWidget);
     expect(find.textContaining('Осталось'), findsNothing);
   });
 
   testWidgets('no goals: facts only and "Задать цель"', (t) async {
-    await t.pumpWidget(MaterialApp(
-      theme: buildLiftlineTheme(),
-      home: Scaffold(
-        body: NutritionSummaryCard(
-          totals: const Nutrients(500, 30, 20, 40),
-          goals: const NutritionGoals(null, null, null, null),
-          hasEntries: true,
-          onSetGoals: () {},
+    await t.pumpWidget(
+      MaterialApp(
+        theme: buildLiftlineTheme(),
+        home: Scaffold(
+          body: NutritionSummaryCard(
+            totals: const Nutrients(500, 30, 20, 40),
+            goals: const NutritionGoals(null, null, null, null),
+            hasEntries: true,
+            onSetGoals: () {},
+          ),
         ),
       ),
-    ));
+    );
     expect(find.text('500 ккал съедено'), findsOneWidget);
     expect(find.text('Задать цель'), findsOneWidget);
   });

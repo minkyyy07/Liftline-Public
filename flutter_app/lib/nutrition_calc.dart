@@ -7,11 +7,19 @@ class Nutrients {
   static const zero = Nutrients(0, 0, 0, 0);
 
   Nutrients operator +(Nutrients o) => Nutrients(
-      kcal + o.kcal, protein + o.protein, fat + o.fat, carbs + o.carbs);
+    kcal + o.kcal,
+    protein + o.protein,
+    fat + o.fat,
+    carbs + o.carbs,
+  );
 
   /// value per 100 g * mass / 100 (exact, rounded only on display).
-  Nutrients scaled(double grams) => Nutrients(kcal * grams / 100,
-      protein * grams / 100, fat * grams / 100, carbs * grams / 100);
+  Nutrients scaled(double grams) => Nutrients(
+    kcal * grams / 100,
+    protein * grams / 100,
+    fat * grams / 100,
+    carbs * grams / 100,
+  );
 }
 
 Nutrients sumNutrients(Iterable<Nutrients> l) =>

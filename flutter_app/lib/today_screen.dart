@@ -64,8 +64,11 @@ class _TodayScreenState extends State<TodayScreen> {
       final nrepo = NutritionRepo(db);
       final nutrition = await nrepo.day(key);
       final goals = await nrepo.goalsFor(key);
-      final workouts = await db
-          .query('workouts', where: 'date = ?', whereArgs: [key]);
+      final workouts = await db.query(
+        'workouts',
+        where: 'date = ?',
+        whereArgs: [key],
+      );
       final days = weekDays(widget.selectedDate);
       final weekRows = await db.query(
         'workouts',
@@ -102,10 +105,7 @@ class _TodayScreenState extends State<TodayScreen> {
     final saved = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => EntryFormScreen(
-          date: widget.selectedDate,
-          meal: meal,
-        ),
+        builder: (_) => EntryFormScreen(date: widget.selectedDate, meal: meal),
       ),
     );
     if (saved == true) _load();
@@ -126,7 +126,23 @@ class _TodayScreenState extends State<TodayScreen> {
     final isToday = isSameDay(widget.selectedDate, DateTime.now());
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Сегодня'),
+        title: const FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.bolt, color: LlColors.accent, size: 22),
+              SizedBox(width: 6),
+              Text(
+                'Liftspire',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+        ),
         actions: [
           if (!isToday || !widget.isFollowingToday)
             TextButton(
@@ -144,15 +160,22 @@ class _TodayScreenState extends State<TodayScreen> {
               Card(
                 color: LlColors.surfaceHigh,
                 child: ListTile(
-                  leading: const Icon(Icons.play_circle, color: LlColors.accent),
+                  leading: const Icon(
+                    Icons.play_circle,
+                    color: LlColors.accent,
+                  ),
                   title: Text('Идёт тренировка: ${_active!['title']}'),
                   trailing: const Text('Продолжить'),
                   onTap: () async {
                     await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => WorkoutOverviewScreen(
-                                workoutId: _active!['id'] as String)));
+                      context,
+                      MaterialPageRoute(
+                        builder:
+                            (_) => WorkoutOverviewScreen(
+                              workoutId: _active!['id'] as String,
+                            ),
+                      ),
+                    );
                     _load();
                   },
                 ),
@@ -180,7 +203,8 @@ class _TodayScreenState extends State<TodayScreen> {
             const SizedBox(height: 16),
             LayoutBuilder(
               builder: (context, constraints) {
-                if (constraints.maxWidth < 320) {
+                final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+                if (constraints.maxWidth < 380 || textScale > 1.2) {
                   return Column(
                     children: [
                       SizedBox(
@@ -203,23 +227,25 @@ class _TodayScreenState extends State<TodayScreen> {
                     ],
                   );
                 }
-                return Row(children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: () => widget.onGoToTab(1),
-                      icon: const Icon(Icons.fitness_center),
-                      label: const Text('Тренировки'),
+                return Row(
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: () => widget.onGoToTab(1),
+                        icon: const Icon(Icons.fitness_center),
+                        label: const Text('Тренировки'),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _addFood,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Добавить еду'),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _addFood,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Добавить еду'),
+                      ),
                     ),
-                  ),
-                ]);
+                  ],
+                );
               },
             ),
           ],
@@ -262,31 +288,48 @@ class _TodayScreenState extends State<TodayScreen> {
                   constraints: const BoxConstraints(minHeight: 64),
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
-                    color: isSameDay(days[i], widget.selectedDate)
-                        ? LlColors.surfaceHigh
-                        : Colors.transparent,
+                    color:
+                        isSameDay(days[i], widget.selectedDate)
+                            ? LlColors.surfaceHigh
+                            : Colors.transparent,
                     borderRadius: BorderRadius.circular(12),
-                    border: isSameDay(days[i], DateTime.now())
-                        ? Border.all(color: LlColors.accent)
-                        : null,
+                    border:
+                        isSameDay(days[i], DateTime.now())
+                            ? Border.all(color: LlColors.accent)
+                            : null,
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(names[i],
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          names[i],
                           style: const TextStyle(
-                              fontSize: 12, color: LlColors.textSecondary)),
+                            fontSize: 12,
+                            color: LlColors.textSecondary,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 4),
-                      Text('${days[i].day}',
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '${days[i].day}',
                           style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 4),
                       Icon(
                         Icons.circle,
                         size: 6,
-                        color: _workoutDays.contains(dateKey(days[i]))
-                            ? LlColors.accent
-                            : Colors.transparent,
+                        color:
+                            _workoutDays.contains(dateKey(days[i]))
+                                ? LlColors.accent
+                                : Colors.transparent,
                       ),
                     ],
                   ),
@@ -299,25 +342,31 @@ class _TodayScreenState extends State<TodayScreen> {
   }
 
   Widget _errorCard() => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(children: [
-            const Icon(Icons.error_outline, color: LlColors.error),
-            const SizedBox(height: 8),
-            Text('Не удалось загрузить данные: $_error',
-                textAlign: TextAlign.center),
-            const SizedBox(height: 8),
-            FilledButton(onPressed: _load, child: const Text('Повторить')),
-          ]),
-        ),
-      );
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          const Icon(Icons.error_outline, color: LlColors.error),
+          const SizedBox(height: 8),
+          Text(
+            'Не удалось загрузить данные: $_error',
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          FilledButton(onPressed: _load, child: const Text('Повторить')),
+        ],
+      ),
+    ),
+  );
 
   Widget _nutritionCard() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Питание',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const Text(
+          'Питание',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 8),
         NutritionSummaryCard(
           totals: _totals,
@@ -346,15 +395,18 @@ class _TodayScreenState extends State<TodayScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Вес тела',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const Text(
+          'Вес тела',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 8),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final isNarrow = constraints.maxWidth < 280;
+                final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+                final isNarrow = constraints.maxWidth < 360 || textScale > 1.2;
                 final info = Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -363,7 +415,9 @@ class _TodayScreenState extends State<TodayScreen> {
                           ? 'Измерений до этой даты нет'
                           : '${fmtG((w['kg'] as num).toDouble())} кг',
                       style: const TextStyle(
-                          fontWeight: FontWeight.bold, fontSize: 16),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
                     ),
                     if (w != null) ...[
                       const SizedBox(height: 4),
@@ -372,15 +426,21 @@ class _TodayScreenState extends State<TodayScreen> {
                             ? 'Измерение за этот день'
                             : 'Последнее: ${DateFormat('d MMM yyyy', 'ru').format(DateTime.parse(w['date'] as String))}',
                         style: const TextStyle(
-                            fontSize: 12, color: LlColors.textSecondary),
+                          fontSize: 12,
+                          color: LlColors.textSecondary,
+                        ),
                       ),
                     ],
                   ],
                 );
                 final btn = TextButton(
                   onPressed: () async {
-                    if (await showWeightDialog(context,
-                        date: widget.selectedDate)) _load();
+                    if (await showWeightDialog(
+                      context,
+                      date: widget.selectedDate,
+                    )) {
+                      _load();
+                    }
                   },
                   child: const Text('Записать вес'),
                 );
@@ -415,22 +475,31 @@ class _TodayScreenState extends State<TodayScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Тренировки дня',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+        const Text(
+          'Тренировки дня',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 8),
         if (_workouts.isEmpty)
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: SizedBox(width: double.infinity, child: Column(children: [
-                const Text('На эту дату тренировок нет',
-                    style: TextStyle(color: LlColors.textSecondary)),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: () => widget.onGoToTab(1),
-                  child: const Text('Перейти к тренировкам'),
+              child: SizedBox(
+                width: double.infinity,
+                child: Column(
+                  children: [
+                    const Text(
+                      'На эту дату тренировок нет',
+                      style: TextStyle(color: LlColors.textSecondary),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: () => widget.onGoToTab(1),
+                      child: const Text('Перейти к тренировкам'),
+                    ),
+                  ],
                 ),
-              ])),
+              ),
             ),
           )
         else
@@ -439,12 +508,17 @@ class _TodayScreenState extends State<TodayScreen> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Card(
                 child: ListTile(
-                  leading: const Icon(Icons.fitness_center,
-                      color: LlColors.accent),
-                  title: Text(w['title'] as String,
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                  leading: const Icon(
+                    Icons.fitness_center,
+                    color: LlColors.accent,
+                  ),
+                  title: Text(
+                    w['title'] as String,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   subtitle: Text(
-                      'Длительность: ${w['duration_minutes'] ?? 0} мин'),
+                    'Длительность: ${w['duration_minutes'] ?? 0} мин',
+                  ),
                 ),
               ),
             ),

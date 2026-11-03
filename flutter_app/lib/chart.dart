@@ -17,12 +17,13 @@ class LineChartView extends StatefulWidget {
   final List<ChartPt> trend; // optional second line (labelled by caller)
   final String unit;
   final double height;
-  const LineChartView(
-      {super.key,
-      required this.points,
-      this.trend = const [],
-      required this.unit,
-      this.height = 200});
+  const LineChartView({
+    super.key,
+    required this.points,
+    this.trend = const [],
+    required this.unit,
+    this.height = 200,
+  });
   @override
   State<LineChartView> createState() => _LineChartViewState();
 }
@@ -40,32 +41,42 @@ class _LineChartViewState extends State<LineChartView> {
   Widget build(BuildContext context) {
     final pts = widget.points;
     final fmt = DateFormat('d MMM yyyy', 'ru');
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      LayoutBuilder(builder: (ctx, c) {
-        final painter = _ChartPainter(pts, widget.trend, _sel, widget.unit);
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: (d) {
-            final i = painter.nearest(d.localPosition, Size(c.maxWidth, widget.height));
-            setState(() => _sel = i);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        LayoutBuilder(
+          builder: (ctx, c) {
+            final painter = _ChartPainter(pts, widget.trend, _sel, widget.unit);
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: (d) {
+                final i = painter.nearest(
+                  d.localPosition,
+                  Size(c.maxWidth, widget.height),
+                );
+                setState(() => _sel = i);
+              },
+              child: Semantics(
+                label: 'График, точек: ${pts.length}',
+                child: CustomPaint(
+                  size: Size(c.maxWidth, widget.height),
+                  painter: painter,
+                ),
+              ),
+            );
           },
-          child: Semantics(
-            label: 'График, точек: ${pts.length}',
-            child: CustomPaint(
-                size: Size(c.maxWidth, widget.height), painter: painter),
-          ),
-        );
-      }),
-      Padding(
-        padding: const EdgeInsets.only(top: 4),
-        child: Text(
-          _sel == null
-              ? 'Нажмите на точку, чтобы увидеть дату и значение'
-              : '${fmt.format(pts[_sel!].date)}: ${fmtG(pts[_sel!].value)} ${widget.unit}',
-          style: const TextStyle(fontSize: 12, color: LlColors.textSecondary),
         ),
-      ),
-    ]);
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            _sel == null
+                ? 'Нажмите на точку, чтобы увидеть дату и значение'
+                : '${fmt.format(pts[_sel!].date)}: ${fmtG(pts[_sel!].value)} ${widget.unit}',
+            style: const TextStyle(fontSize: 12, color: LlColors.textSecondary),
+          ),
+        ),
+      ],
+    );
   }
 }
 
@@ -90,7 +101,10 @@ class _ChartPainter extends CustomPainter {
   }
 
   (double, double) _xRange() {
-    final all = [...pts, ...trend].map((p) => p.date.millisecondsSinceEpoch.toDouble());
+    final all = [
+      ...pts,
+      ...trend,
+    ].map((p) => p.date.millisecondsSinceEpoch.toDouble());
     var lo = all.reduce(math.min), hi = all.reduce(math.max);
     if (hi - lo < 1) hi = lo + 86400000;
     return (lo, hi);
@@ -98,9 +112,11 @@ class _ChartPainter extends CustomPainter {
 
   Offset _pos(ChartPt p, Size s, (double, double) xr, (double, double) yr) {
     final w = s.width - _l - _r, h = s.height - _t - _b;
-    final x = pts.length == 1 && trend.isEmpty
-        ? _l + w / 2
-        : _l + (p.date.millisecondsSinceEpoch - xr.$1) / (xr.$2 - xr.$1) * w;
+    final x =
+        pts.length == 1 && trend.isEmpty
+            ? _l + w / 2
+            : _l +
+                (p.date.millisecondsSinceEpoch - xr.$1) / (xr.$2 - xr.$1) * w;
     final y = _t + (1 - (p.value - yr.$1) / (yr.$2 - yr.$1)) * h;
     return Offset(x, y);
   }
@@ -122,9 +138,12 @@ class _ChartPainter extends CustomPainter {
 
   void _text(Canvas c, String s, Offset o, {bool right = false}) {
     final tp = TextPainter(
-        text: TextSpan(text: s, style: const TextStyle(fontSize: 10, color: LlColors.textSecondary)),
-        textDirection: TextDirection.ltr)
-      ..layout();
+      text: TextSpan(
+        text: s,
+        style: const TextStyle(fontSize: 10, color: LlColors.textSecondary),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
     c.drawText(tp, right ? Offset(o.dx - tp.width, o.dy - tp.height / 2) : o);
   }
 
@@ -132,22 +151,42 @@ class _ChartPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (pts.isEmpty) return;
     final xr = _xRange(), yr = _yRange();
-    final grid = Paint()..color = LlColors.surfaceHigh..strokeWidth = 1;
+    final grid =
+        Paint()
+          ..color = LlColors.surfaceHigh
+          ..strokeWidth = 1;
     for (var i = 0; i <= 3; i++) {
       final v = yr.$1 + (yr.$2 - yr.$1) * i / 3;
       final y = _pos(ChartPt(DateTime.now(), v), size, xr, yr).dy;
       canvas.drawLine(Offset(_l, y), Offset(size.width - _r, y), grid);
-      _text(canvas, fmtG(double.parse(v.toStringAsFixed(1))), Offset(_l - 4, y), right: true);
+      _text(
+        canvas,
+        fmtG(double.parse(v.toStringAsFixed(1))),
+        Offset(_l - 4, y),
+        right: true,
+      );
     }
     final df = DateFormat('d MMM', 'ru');
-    _text(canvas, df.format(DateTime.fromMillisecondsSinceEpoch(xr.$1.toInt())), Offset(_l, size.height - 14));
+    _text(
+      canvas,
+      df.format(DateTime.fromMillisecondsSinceEpoch(xr.$1.toInt())),
+      Offset(_l, size.height - 14),
+    );
     final last = df.format(DateTime.fromMillisecondsSinceEpoch(xr.$2.toInt()));
     _text(canvas, last, Offset(size.width - _r - 36, size.height - 14));
 
     void line(List<ChartPt> l, Color col, double w) {
-      final p = Paint()..color = col..strokeWidth = w..style = PaintingStyle.stroke;
+      final p =
+          Paint()
+            ..color = col
+            ..strokeWidth = w
+            ..style = PaintingStyle.stroke;
       for (var i = 1; i < l.length; i++) {
-        canvas.drawLine(_pos(l[i - 1], size, xr, yr), _pos(l[i], size, xr, yr), p);
+        canvas.drawLine(
+          _pos(l[i - 1], size, xr, yr),
+          _pos(l[i], size, xr, yr),
+          p,
+        );
       }
     }
 
@@ -155,7 +194,11 @@ class _ChartPainter extends CustomPainter {
     line(pts, LlColors.accent, 2);
     for (var i = 0; i < pts.length; i++) {
       final o = _pos(pts[i], size, xr, yr);
-      canvas.drawCircle(o, i == sel ? 6 : 3.5, Paint()..color = i == sel ? LlColors.text : LlColors.accent);
+      canvas.drawCircle(
+        o,
+        i == sel ? 6 : 3.5,
+        Paint()..color = i == sel ? LlColors.text : LlColors.accent,
+      );
     }
   }
 

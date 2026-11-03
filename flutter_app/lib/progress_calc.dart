@@ -12,13 +12,13 @@ const kPeriods = ['1Н', '1М', '3М', '6М', '1Г', 'Всё'];
 
 /// Fixed-length windows in days (months are 30-day windows). null = all time.
 int? periodDays(String p) => switch (p) {
-      '1Н' => 7,
-      '1М' => 30,
-      '3М' => 90,
-      '6М' => 180,
-      '1Г' => 365,
-      _ => null,
-    };
+  '1Н' => 7,
+  '1М' => 30,
+  '3М' => 90,
+  '6М' => 180,
+  '1Г' => 365,
+  _ => null,
+};
 
 /// Window [end-(N-1), end], inclusive; null start = unbounded.
 DateTime? periodStart(String p, DateTime end) {
@@ -49,7 +49,9 @@ bool inWindow(DateTime d, DateTime? start, DateTime end) {
 /// T(D) - T(D-7); both windows need >= 3 measurements.
 /// Difference of window averages, not a normalised rate.
 ({double delta, int nNow, int nPrev})? twoWeekChange(
-    List<WeightPoint> pts, DateTime d) {
+  List<WeightPoint> pts,
+  DateTime d,
+) {
   final e = dateOnly(d);
   final a = movingAverage(pts, e);
   final b = movingAverage(pts, DateTime(e.year, e.month, e.day - 7));
@@ -64,8 +66,14 @@ class SessionPoint {
   final double? bestWeight;
   final double volume;
   final int workingSets;
-  const SessionPoint(this.date, this.sessionId, this.e1rm, this.bestWeight,
-      this.volume, this.workingSets);
+  const SessionPoint(
+    this.date,
+    this.sessionId,
+    this.e1rm,
+    this.bestWeight,
+    this.volume,
+    this.workingSets,
+  );
 }
 
 /// Builds a session point from its sets; null if there are no working sets.
@@ -77,7 +85,13 @@ SessionPoint? sessionPoint(DateTime date, String id, List<SetData> sets) {
     if (s.weight > 0 && (best == null || s.weight > best)) best = s.weight;
   }
   return SessionPoint(
-      dateOnly(date), id, sessionE1rm(w), best, workingVolume(w), w.length);
+    dateOnly(date),
+    id,
+    sessionE1rm(w),
+    best,
+    workingVolume(w),
+    w.length,
+  );
 }
 
 /// (last - first) / first * 100 over >= 2 values with first > 0.

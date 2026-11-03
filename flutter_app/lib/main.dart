@@ -22,7 +22,7 @@ class LiftlineApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Liftline',
+      title: 'Liftspire',
       debugShowCheckedModeBanner: false,
       theme: buildLiftlineTheme(),
       home: const MainNavigationScreen(),

@@ -5,8 +5,12 @@ class SetData {
   final int reps;
   final bool completed;
   final bool warmup;
-  const SetData(this.weight, this.reps,
-      {this.completed = true, this.warmup = false});
+  const SetData(
+    this.weight,
+    this.reps, {
+    this.completed = true,
+    this.warmup = false,
+  });
 
   /// Counts towards working statistics.
   bool get isWorking => completed && !warmup;

@@ -14,41 +14,58 @@ class ProgressRepo {
 
   // ---------- body weight ----------
   /// Primary measurements only (one per day), oldest first.
-  Future<List<Rec>> weights() => db.query('body_weights',
-      where: 'is_primary = 1', orderBy: 'date, rowid');
+  Future<List<Rec>> weights() =>
+      db.query('body_weights', where: 'is_primary = 1', orderBy: 'date, rowid');
 
   Future<Rec?> primaryFor(String date) async {
-    final r = await db.query('body_weights',
-        where: 'date = ? AND is_primary = 1', whereArgs: [date], limit: 1);
+    final r = await db.query(
+      'body_weights',
+      where: 'date = ? AND is_primary = 1',
+      whereArgs: [date],
+      limit: 1,
+    );
     return r.isEmpty ? null : r.first;
   }
 
   /// Latest primary measurement on or before [date] (never a later one).
   Future<Rec?> latestUpTo(String date) async {
-    final r = await db.query('body_weights',
-        where: 'date <= ? AND is_primary = 1',
-        whereArgs: [date],
-        orderBy: 'date DESC, rowid DESC',
-        limit: 1);
+    final r = await db.query(
+      'body_weights',
+      where: 'date <= ? AND is_primary = 1',
+      whereArgs: [date],
+      orderBy: 'date DESC, rowid DESC',
+      limit: 1,
+    );
     return r.isEmpty ? null : r.first;
   }
 
   /// Adds a measurement. If the day already has a primary one and
   /// [replaceExisting] is false, throws [WeightExists] (nothing is changed).
-  Future<String> saveWeight(DateTime date, double kg,
-      {bool replaceExisting = false}) async {
+  Future<String> saveWeight(
+    DateTime date,
+    double kg, {
+    bool replaceExisting = false,
+  }) async {
     if (!kg.isFinite || kg <= 0) throw ArgumentError('kg must be > 0');
     final key = dateKey(date);
     final ex = await primaryFor(key);
     if (ex != null) {
       if (!replaceExisting) throw WeightExists(ex['id'] as String);
-      await db.update('body_weights', {'kg': kg},
-          where: 'id = ?', whereArgs: [ex['id']]);
+      await db.update(
+        'body_weights',
+        {'kg': kg},
+        where: 'id = ?',
+        whereArgs: [ex['id']],
+      );
       return ex['id'] as String;
     }
     final id = _uuid.v4();
-    await db.insert('body_weights',
-        {'id': id, 'date': key, 'kg': kg, 'is_primary': 1});
+    await db.insert('body_weights', {
+      'id': id,
+      'date': key,
+      'kg': kg,
+      'is_primary': 1,
+    });
     return id;
   }
 
@@ -56,12 +73,18 @@ class ProgressRepo {
     if (!kg.isFinite || kg <= 0) throw ArgumentError('kg must be > 0');
     final key = dateKey(date);
     await db.transaction((t) async {
-      final clash = await t.query('body_weights',
-          where: 'date = ? AND is_primary = 1 AND id <> ?',
-          whereArgs: [key, id]);
+      final clash = await t.query(
+        'body_weights',
+        where: 'date = ? AND is_primary = 1 AND id <> ?',
+        whereArgs: [key, id],
+      );
       if (clash.isNotEmpty) throw WeightExists(clash.first['id'] as String);
-      await t.update('body_weights', {'date': key, 'kg': kg},
-          where: 'id = ?', whereArgs: [id]);
+      await t.update(
+        'body_weights',
+        {'date': key, 'kg': kg},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
     });
   }
 
@@ -79,7 +102,8 @@ class ProgressRepo {
   /// Session points (oldest first by date, start time, id) from FINISHED
   /// workouts only; warm-up/uncompleted sets are excluded.
   Future<List<SessionPoint>> strengthSessions(String refId) async {
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
       SELECT w.id AS wid, e.id AS weid, w.date, s.weight_kg, s.reps,
              s.completed, s.set_type
       FROM set_entries s
@@ -87,21 +111,30 @@ class ProgressRepo {
       JOIN workouts w ON e.workout_id = w.id
       WHERE e.exercise_ref_id = ? AND w.status = 'finished'
       ORDER BY w.date, COALESCE(w.started_at_utc, 0), w.id, e.id, s.set_number''',
-        [refId]);
+      [refId],
+    );
     final groups = <String, List<Rec>>{};
     for (final r in rows) {
       groups.putIfAbsent(r['weid'] as String, () => []).add(r);
     }
     final out = <SessionPoint>[];
     for (final g in groups.values) {
-      final sets = g
-          .map((r) => SetData((r['weight_kg'] as num).toDouble(),
-              r['reps'] as int,
-              completed: r['completed'] == 1,
-              warmup: r['set_type'] == 'warmup'))
-          .toList();
-      final p = sessionPoint(DateTime.parse(g.first['date'] as String),
-          g.first['wid'] as String, sets);
+      final sets =
+          g
+              .map(
+                (r) => SetData(
+                  (r['weight_kg'] as num).toDouble(),
+                  r['reps'] as int,
+                  completed: r['completed'] == 1,
+                  warmup: r['set_type'] == 'warmup',
+                ),
+              )
+              .toList();
+      final p = sessionPoint(
+        DateTime.parse(g.first['date'] as String),
+        g.first['wid'] as String,
+        sets,
+      );
       if (p != null) out.add(p);
     }
     return out;
@@ -110,7 +143,8 @@ class ProgressRepo {
   // ---------- nutrition week ----------
   /// Per-day totals for [end-6, end] with the goal valid on each day.
   Future<List<({DateTime date, Nutrients? totals, double? goalKcal})>> week(
-      DateTime end) async {
+    DateTime end,
+  ) async {
     final n = NutritionRepo(db);
     final e = dateOnly(end);
     final out = <({DateTime date, Nutrients? totals, double? goalKcal})>[];
@@ -122,7 +156,7 @@ class ProgressRepo {
       out.add((
         date: d,
         totals: entries.isEmpty ? null : sumNutrients(entries.map(entryTotals)),
-        goalKcal: g.calories
+        goalKcal: g.calories,
       ));
     }
     return out;

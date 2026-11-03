@@ -11,27 +11,42 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   sqfliteFfiInit();
 
-  testWidgets('enter set, validation blocks completion, completion saves',
-      (tester) async {
+  testWidgets('enter set, validation blocks completion, completion saves', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     late WorkoutRepo repo;
     late String weId;
     late String wid;
     await tester.runAsync(() async {
-      final db = await openLiftlineDb(inMemoryDatabasePath,
-          factory: databaseFactoryFfi);
+      final db = await openLiftlineDb(
+        inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+      );
       AppDb.instance.useDatabase(db);
       repo = WorkoutRepo(db);
-      wid = await repo.createWorkout(title: 'T', date: DateTime.now(), start: true);
+      wid = await repo.createWorkout(
+        title: 'T',
+        date: DateTime.now(),
+        start: true,
+      );
       weId = await repo.addExercise(wid, 'Жим');
       await repo.addSet(weId);
     });
 
-    await tester.pumpWidget(MaterialApp(
-      theme: buildLiftlineTheme(),
-      home: ExerciseScreen(workoutId: wid, exerciseIds: [weId], initialIndex: 0),
-    ));
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 300)));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildLiftlineTheme(),
+        home: ExerciseScreen(
+          workoutId: wid,
+          exerciseIds: [weId],
+          initialIndex: 0,
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 300)),
+    );
     await tester.pump();
 
     expect(find.text('Жим'), findsWidgets);
@@ -40,11 +55,15 @@ void main() {
 
     // invalid reps -> not saved, completion blocked
     await tester.enterText(fields.at(1), '0');
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 200)));
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 200)),
+    );
     await tester.pump();
     expect(find.text('Повторы ≥ 1'), findsOneWidget);
     await tester.tap(find.byType(Checkbox));
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 200)));
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 200)),
+    );
     await tester.pump();
     var s = await tester.runAsync(() => repo.sets(weId));
     expect(s!.single['completed'], 0);
@@ -54,10 +73,14 @@ void main() {
     await tester.enterText(fields.at(0), '82,5');
     await tester.enterText(fields.at(1), '5');
     await tester.enterText(fields.at(2), '2');
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 200)));
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 200)),
+    );
     await tester.pump();
     await tester.tap(find.byType(Checkbox));
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 300)));
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 300)),
+    );
     await tester.pump();
     s = await tester.runAsync(() => repo.sets(weId));
     expect(s!.single['weight_kg'], 82.5);
@@ -71,11 +94,19 @@ void main() {
 
     // re-create the screen: saved data restored
     await tester.pumpWidget(const SizedBox());
-    await tester.pumpWidget(MaterialApp(
-      theme: buildLiftlineTheme(),
-      home: ExerciseScreen(workoutId: wid, exerciseIds: [weId], initialIndex: 0),
-    ));
-    await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 300)));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildLiftlineTheme(),
+        home: ExerciseScreen(
+          workoutId: wid,
+          exerciseIds: [weId],
+          initialIndex: 0,
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => Future.delayed(const Duration(milliseconds: 300)),
+    );
     await tester.pump();
     expect(find.text('82.5'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());

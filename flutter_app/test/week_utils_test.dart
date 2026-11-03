@@ -19,7 +19,10 @@ void main() {
 
   test('dateKey format and isSameDay', () {
     expect(dateKey(DateTime(2026, 1, 5, 23, 59)), '2026-01-05');
-    expect(isSameDay(DateTime(2026, 1, 5, 1), DateTime(2026, 1, 5, 23)), isTrue);
+    expect(
+      isSameDay(DateTime(2026, 1, 5, 1), DateTime(2026, 1, 5, 23)),
+      isTrue,
+    );
     expect(isSameDay(DateTime(2026, 1, 5), DateTime(2026, 1, 6)), isFalse);
   });
 }

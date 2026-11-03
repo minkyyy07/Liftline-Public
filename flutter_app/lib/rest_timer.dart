@@ -16,13 +16,15 @@ class RestTimerController extends ChangeNotifier {
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
     final ms = p.getInt(_key);
-    _end = ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+    _end =
+        ms == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
     _schedule();
     notifyListeners();
   }
 
-  Duration get remaining =>
-      RestTimer(_end).remaining(DateTime.now().toUtc());
+  Duration get remaining => RestTimer(_end).remaining(DateTime.now().toUtc());
   bool get isRunning => remaining > Duration.zero;
 
   Future<void> start(int seconds) async {

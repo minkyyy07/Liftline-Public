@@ -81,14 +81,10 @@ ThemeData buildLiftlineTheme() {
       ),
     ),
     textButtonTheme: TextButtonThemeData(
-      style: TextButton.styleFrom(
-        minimumSize: const Size(48, 48),
-      ),
+      style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
     ),
     iconButtonTheme: IconButtonThemeData(
-      style: IconButton.styleFrom(
-        minimumSize: const Size(48, 48),
-      ),
+      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
@@ -99,8 +95,8 @@ ThemeData buildLiftlineTheme() {
       ),
     ),
     textTheme: ThemeData.dark().textTheme.apply(
-          bodyColor: LlColors.text,
-          displayColor: LlColors.text,
-        ),
+      bodyColor: LlColors.text,
+      displayColor: LlColors.text,
+    ),
   );
 }

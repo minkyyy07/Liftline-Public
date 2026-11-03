@@ -26,15 +26,19 @@ class AppDb {
 Future<Database> openLiftlineDb(String path, {DatabaseFactory? factory}) async {
   final f = factory ?? databaseFactory;
   if (await f.databaseExists(path)) {
-    final probe = await f.openDatabase(path,
-        options: OpenDatabaseOptions(readOnly: true, singleInstance: false));
-    final v = (await probe.rawQuery('PRAGMA user_version')).first.values.first
-        as int;
+    final probe = await f.openDatabase(
+      path,
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+    final v =
+        (await probe.rawQuery('PRAGMA user_version')).first.values.first as int;
     await probe.close();
     if (v > 0 && v < kDbVersion) {
       final backup = '$path.v$v.bak';
-      final bdb = await f.openDatabase(path,
-          options: OpenDatabaseOptions(singleInstance: false));
+      final bdb = await f.openDatabase(
+        path,
+        options: OpenDatabaseOptions(singleInstance: false),
+      );
       try {
         if (!await f.databaseExists(backup)) {
           await bdb.execute("VACUUM INTO '${backup.replaceAll("'", "''")}'");
@@ -122,22 +126,38 @@ Future<void> migrateV1ToV2(DatabaseExecutor db) async {
       weight_mode TEXT NOT NULL DEFAULT 'total'
     )''');
   // Old workouts are historical: finished. Old dates/durations untouched.
-  await db.execute("ALTER TABLE workouts ADD COLUMN status TEXT NOT NULL DEFAULT 'finished'");
+  await db.execute(
+    "ALTER TABLE workouts ADD COLUMN status TEXT NOT NULL DEFAULT 'finished'",
+  );
   await db.execute('ALTER TABLE workouts ADD COLUMN started_at_utc INTEGER');
   await db.execute('ALTER TABLE workouts ADD COLUMN finished_at_utc INTEGER');
-  await db.execute('ALTER TABLE workout_exercises ADD COLUMN exercise_ref_id TEXT');
-  await db.execute('ALTER TABLE workout_exercises ADD COLUMN plan_sets INTEGER');
-  await db.execute('ALTER TABLE workout_exercises ADD COLUMN plan_rep_min INTEGER');
-  await db.execute('ALTER TABLE workout_exercises ADD COLUMN plan_rep_max INTEGER');
+  await db.execute(
+    'ALTER TABLE workout_exercises ADD COLUMN exercise_ref_id TEXT',
+  );
+  await db.execute(
+    'ALTER TABLE workout_exercises ADD COLUMN plan_sets INTEGER',
+  );
+  await db.execute(
+    'ALTER TABLE workout_exercises ADD COLUMN plan_rep_min INTEGER',
+  );
+  await db.execute(
+    'ALTER TABLE workout_exercises ADD COLUMN plan_rep_max INTEGER',
+  );
   await db.execute('ALTER TABLE workout_exercises ADD COLUMN plan_rir INTEGER');
-  await db.execute('ALTER TABLE workout_exercises ADD COLUMN plan_rest_sec INTEGER');
+  await db.execute(
+    'ALTER TABLE workout_exercises ADD COLUMN plan_rest_sec INTEGER',
+  );
   await db.execute('ALTER TABLE workout_exercises ADD COLUMN note TEXT');
   await db.execute('ALTER TABLE workout_exercises ADD COLUMN weight_mode TEXT');
   // rir stays NULL for old sets; completed keeps its stored value.
   await db.execute('ALTER TABLE set_entries ADD COLUMN rir INTEGER');
-  await db.execute("ALTER TABLE set_entries ADD COLUMN set_type TEXT NOT NULL DEFAULT 'work'");
+  await db.execute(
+    "ALTER TABLE set_entries ADD COLUMN set_type TEXT NOT NULL DEFAULT 'work'",
+  );
   await db.execute('ALTER TABLE set_entries ADD COLUMN note TEXT');
-  await db.execute('ALTER TABLE set_entries ADD COLUMN completed_at_utc INTEGER');
+  await db.execute(
+    'ALTER TABLE set_entries ADD COLUMN completed_at_utc INTEGER',
+  );
 
   // Catalogue: one entry per exact (trimmed) old name; no fuzzy merging.
   await db.execute('''
@@ -145,11 +165,17 @@ Future<void> migrateV1ToV2(DatabaseExecutor db) async {
     SELECT lower(hex(randomblob(16))), n FROM (
       SELECT DISTINCT trim(exercise_name) AS n FROM workout_exercises
       WHERE trim(exercise_name) <> '')''');
-  await db.execute('''
+  await db.execute(
+    '''
     UPDATE workout_exercises SET exercise_ref_id =
-      (SELECT e.id FROM exercises e WHERE e.name = trim(workout_exercises.exercise_name))''');
-  await db.execute('CREATE INDEX idx_we_workout ON workout_exercises(workout_id)');
-  await db.execute('CREATE INDEX idx_we_ref ON workout_exercises(exercise_ref_id)');
+      (SELECT e.id FROM exercises e WHERE e.name = trim(workout_exercises.exercise_name))''',
+  );
+  await db.execute(
+    'CREATE INDEX idx_we_workout ON workout_exercises(workout_id)',
+  );
+  await db.execute(
+    'CREATE INDEX idx_we_ref ON workout_exercises(exercise_ref_id)',
+  );
   await db.execute('CREATE INDEX idx_se_ex ON set_entries(exercise_id)');
 }
 
@@ -167,13 +193,19 @@ Future<void> migrateV2ToV3(DatabaseExecutor db) async {
       carbs100 REAL NOT NULL,
       archived INTEGER NOT NULL DEFAULT 0
     )''');
-  await db.execute("ALTER TABLE nutrition_entries ADD COLUMN mode TEXT NOT NULL DEFAULT 'portion'");
+  await db.execute(
+    "ALTER TABLE nutrition_entries ADD COLUMN mode TEXT NOT NULL DEFAULT 'portion'",
+  );
   await db.execute('ALTER TABLE nutrition_entries ADD COLUMN meal TEXT');
   await db.execute('ALTER TABLE nutrition_entries ADD COLUMN grams REAL');
   await db.execute('ALTER TABLE nutrition_entries ADD COLUMN per100_kcal REAL');
-  await db.execute('ALTER TABLE nutrition_entries ADD COLUMN per100_protein REAL');
+  await db.execute(
+    'ALTER TABLE nutrition_entries ADD COLUMN per100_protein REAL',
+  );
   await db.execute('ALTER TABLE nutrition_entries ADD COLUMN per100_fat REAL');
-  await db.execute('ALTER TABLE nutrition_entries ADD COLUMN per100_carbs REAL');
+  await db.execute(
+    'ALTER TABLE nutrition_entries ADD COLUMN per100_carbs REAL',
+  );
   await db.execute('ALTER TABLE nutrition_entries ADD COLUMN food_id TEXT');
   await db.execute('''
     CREATE TABLE nutrition_goals (

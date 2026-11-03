@@ -16,17 +16,69 @@ void main() {
   tearDown(() async => dir.delete(recursive: true));
 
   Future<void> seedV1() async {
-    final db = await factory.openDatabase(path,
-        options: OpenDatabaseOptions(
-            version: 1, onCreate: (db, v) => createV1Schema(db)));
-    await db.insert('workouts', {'id': 'w1', 'date': '2025-01-10', 'title': 'Грудь', 'duration_minutes': 55, 'notes': 'n'});
-    await db.insert('workouts', {'id': 'w2', 'date': '2025-01-12', 'title': 'Грудь 2', 'duration_minutes': 40});
-    await db.insert('workout_exercises', {'id': 'e1', 'workout_id': 'w1', 'exercise_name': 'Жим лежа', 'sort_order': 1});
-    await db.insert('workout_exercises', {'id': 'e2', 'workout_id': 'w2', 'exercise_name': ' Жим лежа ', 'sort_order': 1});
-    await db.insert('workout_exercises', {'id': 'e3', 'workout_id': 'w2', 'exercise_name': 'Жим лёжа', 'sort_order': 2});
-    await db.insert('set_entries', {'id': 's1', 'exercise_id': 'e1', 'set_number': 1, 'weight_kg': 100.5, 'reps': 5, 'completed': 1});
-    await db.insert('set_entries', {'id': 's2', 'exercise_id': 'e1', 'set_number': 2, 'weight_kg': 100, 'reps': 4, 'completed': 0});
-    await db.insert('nutrition_entries', {'id': 'n1', 'date': '2025-01-10', 'name': 'Овсянка', 'calories': 300, 'protein': 10, 'fat': 5, 'carbs': 50});
+    final db = await factory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 1,
+        onCreate: (db, v) => createV1Schema(db),
+      ),
+    );
+    await db.insert('workouts', {
+      'id': 'w1',
+      'date': '2025-01-10',
+      'title': 'Грудь',
+      'duration_minutes': 55,
+      'notes': 'n',
+    });
+    await db.insert('workouts', {
+      'id': 'w2',
+      'date': '2025-01-12',
+      'title': 'Грудь 2',
+      'duration_minutes': 40,
+    });
+    await db.insert('workout_exercises', {
+      'id': 'e1',
+      'workout_id': 'w1',
+      'exercise_name': 'Жим лежа',
+      'sort_order': 1,
+    });
+    await db.insert('workout_exercises', {
+      'id': 'e2',
+      'workout_id': 'w2',
+      'exercise_name': ' Жим лежа ',
+      'sort_order': 1,
+    });
+    await db.insert('workout_exercises', {
+      'id': 'e3',
+      'workout_id': 'w2',
+      'exercise_name': 'Жим лёжа',
+      'sort_order': 2,
+    });
+    await db.insert('set_entries', {
+      'id': 's1',
+      'exercise_id': 'e1',
+      'set_number': 1,
+      'weight_kg': 100.5,
+      'reps': 5,
+      'completed': 1,
+    });
+    await db.insert('set_entries', {
+      'id': 's2',
+      'exercise_id': 'e1',
+      'set_number': 2,
+      'weight_kg': 100,
+      'reps': 4,
+      'completed': 0,
+    });
+    await db.insert('nutrition_entries', {
+      'id': 'n1',
+      'date': '2025-01-10',
+      'name': 'Овсянка',
+      'calories': 300,
+      'protein': 10,
+      'fat': 5,
+      'carbs': 50,
+    });
     await db.close();
   }
 
@@ -50,7 +102,9 @@ void main() {
     // 'Жим лежа' (trim-equal) shares one catalogue id; 'Жим лёжа' differs.
     final ex = await db.query('exercises');
     expect(ex.length, 2);
-    final we = {for (final r in await db.query('workout_exercises')) r['id']: r};
+    final we = {
+      for (final r in await db.query('workout_exercises')) r['id']: r,
+    };
     expect(we['e1']!['exercise_ref_id'], we['e2']!['exercise_ref_id']);
     expect(we['e1']!['exercise_ref_id'], isNot(we['e3']!['exercise_ref_id']));
     expect(we['e2']!['exercise_name'], ' Жим лежа '); // original kept
@@ -59,7 +113,10 @@ void main() {
     await db.close();
 
     expect(await factory.databaseExists('$path.v1.bak'), isTrue);
-    final bak = await factory.openDatabase('$path.v1.bak', options: OpenDatabaseOptions(readOnly: true));
+    final bak = await factory.openDatabase(
+      '$path.v1.bak',
+      options: OpenDatabaseOptions(readOnly: true),
+    );
     expect((await bak.query('set_entries')).length, 2);
     expect((await bak.rawQuery('PRAGMA user_version')).first.values.first, 1);
     await bak.close();
@@ -73,7 +130,10 @@ void main() {
     expect((await db.query('set_entries')).length, 2);
     await db.close();
 
-    final fresh = await openLiftlineDb('${dir.path}/fresh.db', factory: factory);
+    final fresh = await openLiftlineDb(
+      '${dir.path}/fresh.db',
+      factory: factory,
+    );
     expect(await fresh.getVersion(), kDbVersion);
     await fresh.close();
   });
@@ -83,7 +143,10 @@ void main() {
     final db0 = await factory.openDatabase(path);
     await db0.execute('CREATE TABLE exercises (x INTEGER)'); // force conflict
     await db0.close();
-    await expectLater(openLiftlineDb(path, factory: factory), throwsA(anything));
+    await expectLater(
+      openLiftlineDb(path, factory: factory),
+      throwsA(anything),
+    );
     final db = await factory.openDatabase(path);
     expect((await db.rawQuery('PRAGMA user_version')).first.values.first, 1);
     expect((await db.query('set_entries')).length, 2);

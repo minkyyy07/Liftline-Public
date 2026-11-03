@@ -5,7 +5,11 @@ DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 /// Monday of the week containing [d].
 DateTime startOfWeek(DateTime d) {
   final day = dateOnly(d);
-  return DateTime(day.year, day.month, day.day - (day.weekday - DateTime.monday));
+  return DateTime(
+    day.year,
+    day.month,
+    day.day - (day.weekday - DateTime.monday),
+  );
 }
 
 /// Monday..Sunday for the week containing [d].

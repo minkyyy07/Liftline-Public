@@ -43,9 +43,18 @@ void main() {
       expect(periodStart('1Н', end), DateTime(2026, 5, 14));
       expect(periodStart('1М', end), DateTime(2026, 4, 21));
       expect(periodStart('Всё', end), isNull);
-      expect(inWindow(DateTime(2026, 5, 14), periodStart('1Н', end), end), isTrue);
-      expect(inWindow(DateTime(2026, 5, 13), periodStart('1Н', end), end), isFalse);
-      expect(inWindow(DateTime(2026, 5, 21), periodStart('1Н', end), end), isFalse);
+      expect(
+        inWindow(DateTime(2026, 5, 14), periodStart('1Н', end), end),
+        isTrue,
+      );
+      expect(
+        inWindow(DateTime(2026, 5, 13), periodStart('1Н', end), end),
+        isFalse,
+      );
+      expect(
+        inWindow(DateTime(2026, 5, 21), periodStart('1Н', end), end),
+        isFalse,
+      );
     });
   });
 
@@ -55,24 +64,34 @@ void main() {
       expect(changePercent([0, 5]), isNull);
       expect(changePercent([100, 110]), closeTo(10, 1e-9));
     });
-    test('session point ignores warm-up/uncompleted; bodyweight has no e1RM',
-        () {
-      final p = sessionPoint(DateTime(2026, 5, 1), 's', const [
-        SetData(100, 5),
-        SetData(120, 5, warmup: true),
-        SetData(130, 5, completed: false),
-      ])!;
-      expect(p.volume, 500);
-      expect(p.bestWeight, 100);
-      expect(p.e1rm, closeTo(116.67, 0.01));
-      final bw = sessionPoint(DateTime(2026, 5, 1), 's', const [SetData(0, 12)])!;
-      expect(bw.e1rm, isNull);
-      expect(bw.bestWeight, isNull);
-      expect(bw.volume, 0);
-      expect(sessionPoint(DateTime(2026, 5, 1), 's', const [SetData(50, 5, warmup: true)]), isNull);
-    });
+    test(
+      'session point ignores warm-up/uncompleted; bodyweight has no e1RM',
+      () {
+        final p =
+            sessionPoint(DateTime(2026, 5, 1), 's', const [
+              SetData(100, 5),
+              SetData(120, 5, warmup: true),
+              SetData(130, 5, completed: false),
+            ])!;
+        expect(p.volume, 500);
+        expect(p.bestWeight, 100);
+        expect(p.e1rm, closeTo(116.67, 0.01));
+        final bw =
+            sessionPoint(DateTime(2026, 5, 1), 's', const [SetData(0, 12)])!;
+        expect(bw.e1rm, isNull);
+        expect(bw.bestWeight, isNull);
+        expect(bw.volume, 0);
+        expect(
+          sessionPoint(DateTime(2026, 5, 1), 's', const [
+            SetData(50, 5, warmup: true),
+          ]),
+          isNull,
+        );
+      },
+    );
     test('average over entry days is not diluted by empty days', () {
-      final a = averageOverEntryDays([2000, null, 1000, null, null, null, null])!;
+      final a =
+          averageOverEntryDays([2000, null, 1000, null, null, null, null])!;
       expect((a.avg, a.days), (1500, 2));
       expect(averageOverEntryDays([null, null]), isNull);
     });
@@ -83,24 +102,34 @@ void main() {
     late WorkoutRepo wr;
     var clock = DateTime(2026, 5, 10, 10);
     setUp(() async {
-      final db = await openLiftlineDb(inMemoryDatabasePath, factory: databaseFactoryFfi);
+      final db = await openLiftlineDb(
+        inMemoryDatabasePath,
+        factory: databaseFactoryFfi,
+      );
       repo = ProgressRepo(db);
       wr = WorkoutRepo(db, now: () => clock);
     });
     tearDown(() => repo.db.close());
 
-    test('one primary weight per day; duplicate asks, never silently replaces',
-        () async {
-      final id = await repo.saveWeight(DateTime(2026, 5, 1), 80);
-      await expectLater(repo.saveWeight(DateTime(2026, 5, 1), 81),
-          throwsA(isA<WeightExists>()));
-      expect((await repo.weights()).single['kg'], 80);
-      await repo.saveWeight(DateTime(2026, 5, 1), 81, replaceExisting: true);
-      expect((await repo.weights()).single['kg'], 81);
-      await expectLater(repo.saveWeight(DateTime(2026, 5, 2), 0), throwsArgumentError);
-      await repo.deleteWeight(id);
-      expect(await repo.weights(), isEmpty);
-    });
+    test(
+      'one primary weight per day; duplicate asks, never silently replaces',
+      () async {
+        final id = await repo.saveWeight(DateTime(2026, 5, 1), 80);
+        await expectLater(
+          repo.saveWeight(DateTime(2026, 5, 1), 81),
+          throwsA(isA<WeightExists>()),
+        );
+        expect((await repo.weights()).single['kg'], 80);
+        await repo.saveWeight(DateTime(2026, 5, 1), 81, replaceExisting: true);
+        expect((await repo.weights()).single['kg'], 81);
+        await expectLater(
+          repo.saveWeight(DateTime(2026, 5, 2), 0),
+          throwsArgumentError,
+        );
+        await repo.deleteWeight(id);
+        expect(await repo.weights(), isEmpty);
+      },
+    );
 
     test('latestUpTo never returns a later measurement', () async {
       await repo.saveWeight(DateTime(2026, 5, 1), 80);
@@ -109,49 +138,83 @@ void main() {
       expect(await repo.latestUpTo('2026-04-01'), isNull);
     });
 
-    test('legacy duplicate rows of a day are kept; only primary is used',
-        () async {
-      await repo.db.insert('body_weights', {'id': 'a', 'date': '2026-05-01', 'kg': 80.0, 'is_primary': 1});
-      await repo.db.insert('body_weights', {'id': 'b', 'date': '2026-05-01', 'kg': 82.0, 'is_primary': 0});
-      expect((await repo.weights()).single['id'], 'a');
-      expect((await repo.db.query('body_weights')).length, 2);
-    });
+    test(
+      'legacy duplicate rows of a day are kept; only primary is used',
+      () async {
+        await repo.db.insert('body_weights', {
+          'id': 'a',
+          'date': '2026-05-01',
+          'kg': 80.0,
+          'is_primary': 1,
+        });
+        await repo.db.insert('body_weights', {
+          'id': 'b',
+          'date': '2026-05-01',
+          'kg': 82.0,
+          'is_primary': 0,
+        });
+        expect((await repo.weights()).single['id'], 'a');
+        expect((await repo.db.query('body_weights')).length, 2);
+      },
+    );
 
-    test('strength: only finished sessions; active/warm-up excluded; sorted',
-        () async {
-      Future<void> session(DateTime d, double kg, int reps,
-          {bool finish = true, bool warm = false}) async {
-        clock = d;
-        final id = await wr.createWorkout(title: 't', date: d, start: true);
-        final e = await wr.addExercise(id, 'Жим');
-        final s = await wr.addSet(e, warmup: warm);
-        await wr.updateSet(s, weight: kg, reps: reps);
-        await wr.setCompleted(s, true);
-        if (finish) await wr.finishWorkout(id);
-      }
-      await session(DateTime(2026, 5, 3, 9), 110, 3);
-      await session(DateTime(2026, 5, 1, 9), 100, 5);
-      await session(DateTime(2026, 5, 4, 9), 200, 5, warm: true);
-      await session(DateTime(2026, 5, 5, 9), 150, 5, finish: false);
-      final ref = (await repo.exercisesWithHistory()).single['id'] as String;
-      final pts = await repo.strengthSessions(ref);
-      expect(pts.map((p) => p.date.day), [1, 3]);
-      expect(pts[0].e1rm, closeTo(116.67, 0.01));
-      expect(pts[1].e1rm, closeTo(121.0, 0.01));
-      expect(pts[0].volume, 500);
-    });
+    test(
+      'strength: only finished sessions; active/warm-up excluded; sorted',
+      () async {
+        Future<void> session(
+          DateTime d,
+          double kg,
+          int reps, {
+          bool finish = true,
+          bool warm = false,
+        }) async {
+          clock = d;
+          final id = await wr.createWorkout(title: 't', date: d, start: true);
+          final e = await wr.addExercise(id, 'Жим');
+          final s = await wr.addSet(e, warmup: warm);
+          await wr.updateSet(s, weight: kg, reps: reps);
+          await wr.setCompleted(s, true);
+          if (finish) await wr.finishWorkout(id);
+        }
 
-    test('week: goal valid on each day, days without entries are null',
-        () async {
-      final n = repo.db;
-      await n.insert('nutrition_entries', {'id': 'x', 'date': '2026-05-10', 'name': 'a', 'calories': 1500, 'protein': 0, 'fat': 0, 'carbs': 0});
-      await n.insert('nutrition_goals', {'id': 'g', 'effective_from': '2026-05-09', 'calories': 2000});
-      final wk = await repo.week(DateTime(2026, 5, 10));
-      expect(wk.length, 7);
-      expect(wk.last.totals!.kcal, 1500);
-      expect(wk.last.goalKcal, 2000);
-      expect(wk.first.totals, isNull);
-      expect(wk.first.goalKcal, isNull); // before the goal's date
-    });
+        await session(DateTime(2026, 5, 3, 9), 110, 3);
+        await session(DateTime(2026, 5, 1, 9), 100, 5);
+        await session(DateTime(2026, 5, 4, 9), 200, 5, warm: true);
+        await session(DateTime(2026, 5, 5, 9), 150, 5, finish: false);
+        final ref = (await repo.exercisesWithHistory()).single['id'] as String;
+        final pts = await repo.strengthSessions(ref);
+        expect(pts.map((p) => p.date.day), [1, 3]);
+        expect(pts[0].e1rm, closeTo(116.67, 0.01));
+        expect(pts[1].e1rm, closeTo(121.0, 0.01));
+        expect(pts[0].volume, 500);
+      },
+    );
+
+    test(
+      'week: goal valid on each day, days without entries are null',
+      () async {
+        final n = repo.db;
+        await n.insert('nutrition_entries', {
+          'id': 'x',
+          'date': '2026-05-10',
+          'name': 'a',
+          'calories': 1500,
+          'protein': 0,
+          'fat': 0,
+          'carbs': 0,
+        });
+        await n.insert('nutrition_goals', {
+          'id': 'g',
+          'effective_from': '2026-05-09',
+          'calories': 2000,
+        });
+        final wk = await repo.week(DateTime(2026, 5, 10));
+        expect(wk.length, 7);
+        expect(wk.last.totals!.kcal, 1500);
+        expect(wk.last.goalKcal, 2000);
+        expect(wk.first.totals, isNull);
+        expect(wk.first.goalKcal, isNull); // before the goal's date
+      },
+    );
   });
 }

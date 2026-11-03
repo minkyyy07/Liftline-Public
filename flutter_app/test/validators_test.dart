@@ -6,50 +6,109 @@ void main() {
     test('returns error for null, empty or whitespace', () {
       expect(InputValidators.validateRequiredText(null, 'Название'), isNotNull);
       expect(InputValidators.validateRequiredText('', 'Название'), isNotNull);
-      expect(InputValidators.validateRequiredText('   ', 'Название'), isNotNull);
+      expect(
+        InputValidators.validateRequiredText('   ', 'Название'),
+        isNotNull,
+      );
     });
 
     test('returns null for valid text', () {
-      expect(InputValidators.validateRequiredText('Жим лежа', 'Название'), isNull);
-      expect(InputValidators.validateRequiredText('  Овсянка  ', 'Название'), isNull);
+      expect(
+        InputValidators.validateRequiredText('Жим лежа', 'Название'),
+        isNull,
+      );
+      expect(
+        InputValidators.validateRequiredText('  Овсянка  ', 'Название'),
+        isNull,
+      );
     });
   });
 
   group('validatePositiveInt', () {
     test('returns error for non-integer formats', () {
-      expect(InputValidators.validatePositiveInt('abc', 'Длительность'), isNotNull);
-      expect(InputValidators.validatePositiveInt('12.5', 'Длительность'), isNotNull);
-      expect(InputValidators.validatePositiveInt('10,5', 'Длительность'), isNotNull);
+      expect(
+        InputValidators.validatePositiveInt('abc', 'Длительность'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validatePositiveInt('12.5', 'Длительность'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validatePositiveInt('10,5', 'Длительность'),
+        isNotNull,
+      );
     });
 
     test('returns error for zero and negative numbers', () {
-      expect(InputValidators.validatePositiveInt('0', 'Длительность'), isNotNull);
-      expect(InputValidators.validatePositiveInt('-1', 'Длительность'), isNotNull);
-      expect(InputValidators.validatePositiveInt('-100', 'Длительность'), isNotNull);
+      expect(
+        InputValidators.validatePositiveInt('0', 'Длительность'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validatePositiveInt('-1', 'Длительность'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validatePositiveInt('-100', 'Длительность'),
+        isNotNull,
+      );
     });
 
     test('handles empty values according to required flag', () {
-      expect(InputValidators.validatePositiveInt('', 'Длительность', required: true), isNotNull);
-      expect(InputValidators.validatePositiveInt('', 'Длительность', required: false), isNull);
-      expect(InputValidators.validatePositiveInt(null, 'Длительность', required: false), isNull);
+      expect(
+        InputValidators.validatePositiveInt('', 'Длительность', required: true),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validatePositiveInt(
+          '',
+          'Длительность',
+          required: false,
+        ),
+        isNull,
+      );
+      expect(
+        InputValidators.validatePositiveInt(
+          null,
+          'Длительность',
+          required: false,
+        ),
+        isNull,
+      );
     });
 
     test('returns null for valid positive integers', () {
       expect(InputValidators.validatePositiveInt('1', 'Длительность'), isNull);
       expect(InputValidators.validatePositiveInt('60', 'Длительность'), isNull);
-      expect(InputValidators.validatePositiveInt(' 120 ', 'Длительность'), isNull);
+      expect(
+        InputValidators.validatePositiveInt(' 120 ', 'Длительность'),
+        isNull,
+      );
     });
   });
 
   group('validateNonNegativeInt', () {
     test('returns error for non-integer formats', () {
-      expect(InputValidators.validateNonNegativeInt('abc', 'Калории'), isNotNull);
-      expect(InputValidators.validateNonNegativeInt('15.8', 'Калории'), isNotNull);
+      expect(
+        InputValidators.validateNonNegativeInt('abc', 'Калории'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeInt('15.8', 'Калории'),
+        isNotNull,
+      );
     });
 
     test('returns error for negative numbers', () {
-      expect(InputValidators.validateNonNegativeInt('-1', 'Калории'), isNotNull);
-      expect(InputValidators.validateNonNegativeInt('-500', 'Калории'), isNotNull);
+      expect(
+        InputValidators.validateNonNegativeInt('-1', 'Калории'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeInt('-500', 'Калории'),
+        isNotNull,
+      );
     });
 
     test('allows zero and positive integers', () {
@@ -58,24 +117,58 @@ void main() {
     });
 
     test('handles empty values based on required flag', () {
-      expect(InputValidators.validateNonNegativeInt('', 'Калории', required: true), isNotNull);
-      expect(InputValidators.validateNonNegativeInt('', 'Калории', required: false), isNull);
-      expect(InputValidators.validateNonNegativeInt(null, 'Калории', required: false), isNull);
+      expect(
+        InputValidators.validateNonNegativeInt('', 'Калории', required: true),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeInt('', 'Калории', required: false),
+        isNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeInt(
+          null,
+          'Калории',
+          required: false,
+        ),
+        isNull,
+      );
     });
   });
 
   group('validateNonNegativeDouble', () {
     test('returns error for invalid formats', () {
-      expect(InputValidators.validateNonNegativeDouble('abc', 'Вес'), isNotNull);
-      expect(InputValidators.validateNonNegativeDouble('12..3', 'Вес'), isNotNull);
-      expect(InputValidators.validateNonNegativeDouble('NaN', 'Вес'), isNotNull);
-      expect(InputValidators.validateNonNegativeDouble('Infinity', 'Вес'), isNotNull);
+      expect(
+        InputValidators.validateNonNegativeDouble('abc', 'Вес'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeDouble('12..3', 'Вес'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeDouble('NaN', 'Вес'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeDouble('Infinity', 'Вес'),
+        isNotNull,
+      );
     });
 
     test('returns error for negative doubles', () {
-      expect(InputValidators.validateNonNegativeDouble('-0.1', 'Вес'), isNotNull);
-      expect(InputValidators.validateNonNegativeDouble('-50.0', 'Вес'), isNotNull);
-      expect(InputValidators.validateNonNegativeDouble('-10,5', 'Вес'), isNotNull);
+      expect(
+        InputValidators.validateNonNegativeDouble('-0.1', 'Вес'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeDouble('-50.0', 'Вес'),
+        isNotNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeDouble('-10,5', 'Вес'),
+        isNotNull,
+      );
     });
 
     test('allows zero and positive numbers with dot or comma', () {
@@ -87,9 +180,22 @@ void main() {
     });
 
     test('handles optional empty values', () {
-      expect(InputValidators.validateNonNegativeDouble('', 'Белки', required: false), isNull);
-      expect(InputValidators.validateNonNegativeDouble(null, 'Белки', required: false), isNull);
-      expect(InputValidators.validateNonNegativeDouble('', 'Вес', required: true), isNotNull);
+      expect(
+        InputValidators.validateNonNegativeDouble('', 'Белки', required: false),
+        isNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeDouble(
+          null,
+          'Белки',
+          required: false,
+        ),
+        isNull,
+      );
+      expect(
+        InputValidators.validateNonNegativeDouble('', 'Вес', required: true),
+        isNotNull,
+      );
     });
   });
 
@@ -113,8 +219,14 @@ void main() {
       expect(InputValidators.parseNonNegativeDouble('75.5'), 75.5);
       expect(InputValidators.parseNonNegativeDouble('75,5'), 75.5);
       expect(InputValidators.parseNonNegativeDouble('0'), 0.0);
-      expect(InputValidators.parseNonNegativeDouble('-5', defaultValue: 0.0), 0.0);
-      expect(InputValidators.parseNonNegativeDouble('', defaultValue: 0.0), 0.0);
+      expect(
+        InputValidators.parseNonNegativeDouble('-5', defaultValue: 0.0),
+        0.0,
+      );
+      expect(
+        InputValidators.parseNonNegativeDouble('', defaultValue: 0.0),
+        0.0,
+      );
     });
 
     test('parseOptionalText trims and handles empty strings', () {
