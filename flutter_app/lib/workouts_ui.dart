@@ -213,15 +213,60 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: Card(
                           color: LlColors.surfaceHigh,
-                          child: ListTile(
-                            leading: const Icon(
-                              Icons.play_circle,
-                              color: LlColors.accent,
-                            ),
-                            title: Text('Идёт: ${w['title']}'),
-                            subtitle: const Text('Нажмите, чтобы продолжить'),
-                            trailing: const Icon(Icons.chevron_right),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(16),
                             onTap: () => _open(w['id'] as String),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.play_circle,
+                                    color: LlColors.accent,
+                                    size: 28,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          'Активная тренировка',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .labelSmall
+                                              ?.copyWith(
+                                                color: LlColors.textSecondary,
+                                              ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          w['title'] as String? ?? '',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleSmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  const Icon(
+                                    Icons.chevron_right,
+                                    color: LlColors.textSecondary,
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -1179,7 +1224,7 @@ class _TimerBar extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Row(
             children: [
-              const Icon(Icons.timer, color: LlColors.accent),
+              const Icon(Icons.timer, color: LlColors.secondary),
               const SizedBox(width: 8),
               Text(
                 '$mm:$ss',
@@ -1413,7 +1458,7 @@ class _SetRowState extends State<_SetRow> {
                 child: Checkbox(
                   value: _done,
                   onChanged: (_) => _tapDone(),
-                  activeColor: LlColors.accent,
+                  activeColor: LlColors.success,
                 ),
               ),
             ],

@@ -131,7 +131,7 @@ class _TodayScreenState extends State<TodayScreen> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.bolt, color: LlColors.accent, size: 22),
+              Icon(Icons.bolt, color: LlColors.secondary, size: 24),
               SizedBox(width: 6),
               Text(
                 'Liftspire',
@@ -159,13 +159,8 @@ class _TodayScreenState extends State<TodayScreen> {
             if (_active != null) ...[
               Card(
                 color: LlColors.surfaceHigh,
-                child: ListTile(
-                  leading: const Icon(
-                    Icons.play_circle,
-                    color: LlColors.accent,
-                  ),
-                  title: Text('Идёт тренировка: ${_active!['title']}'),
-                  trailing: const Text('Продолжить'),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
                   onTap: () async {
                     await Navigator.push(
                       context,
@@ -178,14 +173,57 @@ class _TodayScreenState extends State<TodayScreen> {
                     );
                     _load();
                   },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.play_circle,
+                          color: LlColors.accent,
+                          size: 28,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Идёт тренировка',
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(color: LlColors.textSecondary),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _active!['title'] as String? ?? '',
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.w600),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.chevron_right,
+                          color: LlColors.accent,
+                          size: 24,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 12),
             ],
             _dateHeader(),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             _weekStrip(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             if (_error != null)
               _errorCard()
             else if (_loading)
@@ -257,14 +295,32 @@ class _TodayScreenState extends State<TodayScreen> {
   Widget _dateHeader() {
     final fmt = DateFormat('d MMMM yyyy, EEEE', 'ru');
     return Card(
-      child: ListTile(
-        leading: const Icon(Icons.event, color: LlColors.secondary),
-        title: Text(
-          fmt.format(widget.selectedDate),
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        trailing: const Icon(Icons.arrow_drop_down),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
         onTap: _pickDate,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              const Icon(Icons.event, color: LlColors.accent, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  fmt.format(widget.selectedDate),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              const Icon(
+                Icons.arrow_drop_down,
+                color: LlColors.textSecondary,
+                size: 20,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -282,17 +338,18 @@ class _TodayScreenState extends State<TodayScreen> {
               label:
                   '${names[i]} ${days[i].day}${_workoutDays.contains(dateKey(days[i])) ? ', есть тренировка' : ''}',
               child: InkWell(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 onTap: () => widget.onDateChanged(days[i]),
                 child: Container(
-                  constraints: const BoxConstraints(minHeight: 64),
+                  constraints: const BoxConstraints(minHeight: 48),
+                  padding: const EdgeInsets.symmetric(vertical: 4),
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
                     color:
                         isSameDay(days[i], widget.selectedDate)
                             ? LlColors.surfaceHigh
                             : Colors.transparent,
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                     border:
                         isSameDay(days[i], DateTime.now())
                             ? Border.all(color: LlColors.accent)
@@ -306,26 +363,26 @@ class _TodayScreenState extends State<TodayScreen> {
                         child: Text(
                           names[i],
                           style: const TextStyle(
-                            fontSize: 12,
+                            fontSize: 11,
                             color: LlColors.textSecondary,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
                           '${days[i].day}',
                           style: const TextStyle(
-                            fontSize: 16,
+                            fontSize: 15,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Icon(
                         Icons.circle,
-                        size: 6,
+                        size: 5,
                         color:
                             _workoutDays.contains(dateKey(days[i]))
                                 ? LlColors.accent

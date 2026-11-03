@@ -281,6 +281,13 @@ class _NutritionScreenState extends State<NutritionScreen> {
     widget.onDateChanged(DateTime(s.year, s.month, s.day + d));
   }
 
+  Future<void> _addFoodAction() async {
+    final meal = await showMealPickerSheet(context);
+    if (meal != null && mounted) {
+      _openForm(meal: meal);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final totals = sumNutrients(_entries.map(entryTotals));
@@ -288,6 +295,11 @@ class _NutritionScreenState extends State<NutritionScreen> {
       appBar: AppBar(
         title: const Text('Питание'),
         actions: [
+          IconButton(
+            tooltip: 'Добавить еду',
+            icon: const Icon(Icons.add),
+            onPressed: _addFoodAction,
+          ),
           IconButton(
             tooltip: 'Цели питания',
             icon: const Icon(Icons.flag_outlined),
@@ -316,7 +328,7 @@ class _NutritionScreenState extends State<NutritionScreen> {
               : RefreshIndicator(
                 onRefresh: _load,
                 child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 40),
                   children: [
                     _dateRow(),
                     const SizedBox(height: 12),
@@ -331,20 +343,19 @@ class _NutritionScreenState extends State<NutritionScreen> {
                       },
                     ),
                     const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: _addFoodAction,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Добавить еду'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
                     for (final m in [...kMeals, 'other']) _mealGroup(m),
                   ],
                 ),
               ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final meal = await showMealPickerSheet(context);
-          if (meal != null && mounted) {
-            _openForm(meal: meal);
-          }
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('Добавить еду'),
-      ),
     );
   }
 
@@ -502,13 +513,29 @@ class NutritionSummaryCard extends StatelessWidget {
           child: Column(
             children: [
               if (!hasGoal) ...[
-                Text(
-                  '${fmtKcal(totals.kcal)} ккал съедено',
-                  style: const TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    color: LlColors.accent,
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: fmtKcal(totals.kcal),
+                        style: const TextStyle(
+                          fontSize: 34,
+                          fontWeight: FontWeight.w800,
+                          color: LlColors.accent,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      const TextSpan(
+                        text: ' ккал съедено',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                          color: LlColors.textSecondary,
+                        ),
+                      ),
+                    ],
                   ),
+                  textAlign: TextAlign.center,
                 ),
               ] else ...[
                 FittedBox(
@@ -521,9 +548,10 @@ class NutritionSummaryCard extends StatelessWidget {
                       Text(
                         fmtKcal(totals.kcal),
                         style: const TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 34,
+                          fontWeight: FontWeight.w800,
                           color: LlColors.accent,
+                          letterSpacing: -0.5,
                         ),
                       ),
                       Text(
@@ -542,13 +570,14 @@ class NutritionSummaryCard extends StatelessWidget {
                   builder: (_) {
                     final b = calorieBalance(totals.kcal, gk);
                     final isOver = b.over > 0;
+                    final isReached = b.remaining == 0 && !isOver;
                     final progress = (totals.kcal / gk).clamp(0.0, 1.0);
                     return Column(
                       children: [
                         Text(
                           isOver
                               ? 'Сверх цели: ${fmtKcal(b.over)} ккал'
-                              : (b.remaining == 0
+                              : (isReached
                                   ? 'Цель достигнута'
                                   : 'Осталось: ${fmtKcal(b.remaining)} ккал'),
                           style: TextStyle(
@@ -556,8 +585,10 @@ class NutritionSummaryCard extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                             color:
                                 isOver
-                                    ? LlColors.warning
-                                    : LlColors.textSecondary,
+                                    ? LlColors.secondary
+                                    : (isReached
+                                        ? LlColors.success
+                                        : LlColors.textSecondary),
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -566,7 +597,12 @@ class NutritionSummaryCard extends StatelessWidget {
                           child: LinearProgressIndicator(
                             value: progress,
                             minHeight: 6,
-                            color: isOver ? LlColors.warning : LlColors.accent,
+                            color:
+                                isOver
+                                    ? LlColors.secondary
+                                    : (isReached
+                                        ? LlColors.success
+                                        : LlColors.accent),
                             backgroundColor: LlColors.surfaceHigh,
                           ),
                         ),
@@ -583,10 +619,10 @@ class NutritionSummaryCard extends StatelessWidget {
                     'Белки',
                     totals.protein,
                     goals.protein,
-                    LlColors.secondary,
+                    LlColors.accent,
                   ),
-                  macro('Жиры', totals.fat, goals.fat, LlColors.warning),
-                  macro('Углеводы', totals.carbs, goals.carbs, LlColors.accent),
+                  macro('Жиры', totals.fat, goals.fat, LlColors.secondary),
+                  macro('Углеводы', totals.carbs, goals.carbs, LlColors.warning),
                 ],
               ),
               const SizedBox(height: 12),

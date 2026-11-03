@@ -78,6 +78,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
       ),
     ];
 
+    final textScaler = MediaQuery.textScalerOf(context);
+    final navHeight = (textScaler.scale(72.0)).clamp(72.0, 96.0);
+
     return PopScope(
       canPop: _currentIndex == 0,
       onPopInvokedWithResult: (didPop, _) {
@@ -89,6 +92,8 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
       child: Scaffold(
         body: IndexedStack(index: _currentIndex, children: screens),
         bottomNavigationBar: NavigationBar(
+          height: navHeight,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
           selectedIndex: _currentIndex,
           onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
           destinations: const [
@@ -96,21 +101,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
               icon: Icon(Icons.today_outlined),
               selectedIcon: Icon(Icons.today),
               label: 'Сегодня',
+              tooltip: 'Сегодня',
             ),
             NavigationDestination(
               icon: Icon(Icons.fitness_center_outlined),
               selectedIcon: Icon(Icons.fitness_center),
               label: 'Тренировки',
+              tooltip: 'Тренировки',
             ),
             NavigationDestination(
               icon: Icon(Icons.restaurant_outlined),
               selectedIcon: Icon(Icons.restaurant),
               label: 'Питание',
+              tooltip: 'Питание',
             ),
             NavigationDestination(
               icon: Icon(Icons.show_chart_outlined),
               selectedIcon: Icon(Icons.show_chart),
               label: 'Прогресс',
+              tooltip: 'Прогресс',
             ),
           ],
         ),

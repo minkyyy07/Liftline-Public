@@ -199,6 +199,35 @@ class ProgressScreen extends StatefulWidget {
 
 class _ProgressScreenState extends State<ProgressScreen> {
   String _tab = 'strength';
+  final ScrollController _tabScroll = ScrollController();
+
+  @override
+  void dispose() {
+    _tabScroll.dispose();
+    super.dispose();
+  }
+
+  void _onTabChanged(String tab) {
+    setState(() => _tab = tab);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_tabScroll.hasClients) return;
+      final max = _tabScroll.position.maxScrollExtent;
+      if (max <= 0) return;
+      double target = 0;
+      if (tab == 'strength') {
+        target = 0;
+      } else if (tab == 'weight') {
+        target = max / 2;
+      } else if (tab == 'nutrition') {
+        target = max;
+      }
+      _tabScroll.animateTo(
+        target,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -208,17 +237,34 @@ class _ProgressScreenState extends State<ProgressScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'strength', label: Text('Силовые')),
-                  ButtonSegment(value: 'weight', label: Text('Вес тела')),
-                  ButtonSegment(value: 'nutrition', label: Text('Питание')),
-                ],
-                selected: {_tab},
-                onSelectionChanged: (s) => setState(() => _tab = s.first),
-              ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  controller: _tabScroll,
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                    child: SegmentedButton<String>(
+                      showSelectedIcon: false,
+                      style: SegmentedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 8,
+                        ),
+                      ),
+                      segments: const [
+                        ButtonSegment(value: 'strength', label: Text('Силовые')),
+                        ButtonSegment(value: 'weight', label: Text('Вес тела')),
+                        ButtonSegment(value: 'nutrition', label: Text('Питание')),
+                      ],
+                      selected: {_tab},
+                      onSelectionChanged: (s) => _onTabChanged(s.first),
+                    ),
+                  ),
+                );
+              },
             ),
           ),
           Expanded(
@@ -377,7 +423,17 @@ class _StrengthTabState extends State<StrengthTab> {
                 FilledButton.icon(
                   onPressed: () => widget.onGoToTab!(1),
                   icon: const Icon(Icons.fitness_center),
-                  label: const Text('Перейти к тренировкам'),
+                  label: const Text(
+                    'Перейти к тренировкам',
+                    textAlign: TextAlign.center,
+                  ),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 14,
+                    ),
+                    minimumSize: const Size(0, 48),
+                  ),
                 ),
               ],
             ],
@@ -460,7 +516,17 @@ class _StrengthTabState extends State<StrengthTab> {
                     OutlinedButton.icon(
                       onPressed: () => widget.onGoToTab!(1),
                       icon: const Icon(Icons.fitness_center, size: 18),
-                      label: const Text('Перейти к тренировкам'),
+                      label: const Text(
+                        'Перейти к тренировкам',
+                        textAlign: TextAlign.center,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        minimumSize: const Size(0, 44),
+                      ),
                     ),
                   ],
                 ],
@@ -816,7 +882,17 @@ class _NutritionWeekTabState extends State<NutritionWeekTab> {
                     OutlinedButton.icon(
                       onPressed: () => widget.onGoToTab!(2),
                       icon: const Icon(Icons.restaurant, size: 18),
-                      label: const Text('Перейти к питанию'),
+                      label: const Text(
+                        'Перейти к питанию',
+                        textAlign: TextAlign.center,
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        minimumSize: const Size(0, 44),
+                      ),
                     ),
                   ],
                 ],
