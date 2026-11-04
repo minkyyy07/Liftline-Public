@@ -627,11 +627,13 @@ class _TodayScreenState extends State<TodayScreen> {
       );
     }
 
-    // 2. Planned workout on selected date
+    // 2. Workout on selected date (planned or finished)
     if (_workouts.isNotEmpty) {
       final primary = _workouts.first;
       final title = primary['title'] as String;
-      final duration = primary['duration_minutes'] ?? 0;
+      final duration = (primary['duration_minutes'] as num?)?.toInt() ?? 0;
+      final status = primary['status'] as String? ?? 'planned';
+      final isFinished = status == 'finished';
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -643,6 +645,9 @@ class _TodayScreenState extends State<TodayScreen> {
           const SizedBox(height: 6),
           AthleticCard(
             padding: const EdgeInsets.all(16),
+            borderColor: isFinished
+                ? AthleticTokens.electricGreen.withValues(alpha: 0.3)
+                : AthleticTokens.borderSubtle,
             onTap: () async {
               await Navigator.push(
                 context,
@@ -658,15 +663,21 @@ class _TodayScreenState extends State<TodayScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Flexible(
+                    Flexible(
                       child: FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerLeft,
-                        child: AthleticBadge(
-                          label: 'ЗАПЛАНИРОВАНО',
-                          color: AthleticTokens.electricBlue,
-                          icon: Icons.event_available,
-                        ),
+                        child: isFinished
+                            ? const AthleticBadge(
+                                label: 'ЗАВЕРШЕНА',
+                                color: AthleticTokens.electricGreen,
+                                icon: Icons.check_circle_outline,
+                              )
+                            : const AthleticBadge(
+                                label: 'ЗАПЛАНИРОВАНО',
+                                color: AthleticTokens.electricBlue,
+                                icon: Icons.event_available,
+                              ),
                       ),
                     ),
                     if (_workouts.length > 1) ...[
@@ -696,7 +707,9 @@ class _TodayScreenState extends State<TodayScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Длительность: $duration мин',
+                  duration > 0
+                      ? 'Длительность: $duration мин'
+                      : (isFinished ? 'Тренировка завершена' : 'Запланирована'),
                   style: const TextStyle(
                     color: AthleticTokens.textSecondary,
                     fontSize: 12,
@@ -713,26 +726,45 @@ class _TodayScreenState extends State<TodayScreen> {
                   width: double.infinity,
                   child: FilledButton.icon(
                     style: FilledButton.styleFrom(
-                      backgroundColor: AthleticTokens.electricBlue,
-                      foregroundColor: Colors.black,
+                      backgroundColor: isFinished
+                          ? AthleticTokens.surfaceHighlight
+                          : AthleticTokens.electricBlue,
+                      foregroundColor: isFinished
+                          ? AthleticTokens.textPrimary
+                          : Colors.black,
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
+                        side: isFinished
+                            ? const BorderSide(color: AthleticTokens.border)
+                            : BorderSide.none,
                       ),
                     ),
                     onPressed: () async {
-                      await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => WorkoutOverviewScreen(workoutId: primary['id'] as String),
-                        ),
-                      );
+                      if (isFinished) {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => WorkoutResultScreen(workoutId: primary['id'] as String),
+                          ),
+                        );
+                      } else {
+                        await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => WorkoutOverviewScreen(workoutId: primary['id'] as String),
+                          ),
+                        );
+                      }
                       _load();
                     },
-                    icon: const Icon(Icons.play_arrow, size: 20),
-                    label: const Text(
-                      'Начать тренировку',
-                      style: TextStyle(
+                    icon: Icon(
+                      isFinished ? Icons.insights : Icons.play_arrow,
+                      size: 20,
+                    ),
+                    label: Text(
+                      isFinished ? 'Посмотреть результат' : 'Начать',
+                      style: const TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 15,
                       ),
@@ -803,81 +835,38 @@ class _TodayScreenState extends State<TodayScreen> {
                 ],
               ),
               const SizedBox(height: 14),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-                  final isNarrow = constraints.maxWidth < 340 || textScale > 1.2;
-
-                  if (isNarrow) {
-                    return Column(
-                      children: [
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton.icon(
-                            style: FilledButton.styleFrom(
-                              backgroundColor: AthleticTokens.electricBlue,
-                              foregroundColor: Colors.black,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            onPressed: _createWorkout,
-                            icon: const Icon(Icons.add, size: 18),
-                            label: const Text(
-                              'Создать тренировку',
-                              style: TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton(
-                            style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: AthleticTokens.border),
-                              foregroundColor: AthleticTokens.textPrimary,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                            ),
-                            onPressed: () => widget.onGoToTab(1),
-                            child: const Text('Выбрать из списка'),
-                          ),
-                        ),
-                      ],
-                    );
-                  }
-
-                  return Row(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AthleticTokens.electricBlue,
-                            foregroundColor: Colors.black,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: _createWorkout,
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text(
-                            'Создать тренировку',
-                            style: TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
+              Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AthleticTokens.electricBlue,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        flex: 2,
-                        child: OutlinedButton(
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: AthleticTokens.border),
-                            foregroundColor: AthleticTokens.textPrimary,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: () => widget.onGoToTab(1),
-                          child: const Text('Выбрать из списка'),
-                        ),
+                      onPressed: _createWorkout,
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text(
+                        'Создать тренировку',
+                        style: TextStyle(fontWeight: FontWeight.w800),
                       ),
-                    ],
-                  );
-                },
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: AthleticTokens.border),
+                        foregroundColor: AthleticTokens.textPrimary,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () => widget.onGoToTab(1),
+                      child: const Text('Выбрать из списка'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -1165,77 +1154,20 @@ class _TodayScreenState extends State<TodayScreen> {
     );
   }
 
-  /// Secondary quick actions dock: Add food, Record weight
+  /// Secondary quick actions dock: Add food (Record weight is already in the weight card above)
   Widget _buildQuickActions(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-        final isNarrow = constraints.maxWidth < 340 || textScale > 1.2;
-
-        if (isNarrow) {
-          return Column(
-            children: [
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AthleticTokens.border),
-                    foregroundColor: AthleticTokens.textPrimary,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  onPressed: _addFood,
-                  icon: const Icon(Icons.restaurant_outlined, size: 18, color: AthleticTokens.electricBlue),
-                  label: const Text('Добавить еду', style: TextStyle(fontWeight: FontWeight.w600)),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AthleticTokens.border),
-                    foregroundColor: AthleticTokens.textPrimary,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  onPressed: _recordWeight,
-                  icon: const Icon(Icons.monitor_weight_outlined, size: 18, color: AthleticTokens.electricBlue),
-                  label: const Text('Записать вес', style: TextStyle(fontWeight: FontWeight.w600)),
-                ),
-              ),
-            ],
-          );
-        }
-
-        return Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AthleticTokens.border),
-                  foregroundColor: AthleticTokens.textPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onPressed: _addFood,
-                icon: const Icon(Icons.restaurant_outlined, size: 18, color: AthleticTokens.electricBlue),
-                label: const Text('Добавить еду', style: TextStyle(fontWeight: FontWeight.w600)),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AthleticTokens.border),
-                  foregroundColor: AthleticTokens.textPrimary,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                onPressed: _recordWeight,
-                icon: const Icon(Icons.monitor_weight_outlined, size: 18, color: AthleticTokens.electricBlue),
-                label: const Text('Записать вес', style: TextStyle(fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ],
-        );
-      },
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          side: const BorderSide(color: AthleticTokens.border),
+          foregroundColor: AthleticTokens.textPrimary,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+        ),
+        onPressed: _addFood,
+        icon: const Icon(Icons.restaurant_outlined, size: 18, color: AthleticTokens.electricBlue),
+        label: const Text('Добавить еду', style: TextStyle(fontWeight: FontWeight.w600)),
+      ),
     );
   }
 }

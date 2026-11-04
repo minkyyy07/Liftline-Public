@@ -65,6 +65,7 @@ class AuthService extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
 
   void _handleSessionExpired() {
+    _apiClient.switchSession(null);
     _user = null;
     _db.switchToUser(null);
     notifyListeners();
@@ -82,13 +83,16 @@ class AuthService extends ChangeNotifier {
 
       if (refreshToken != null && userId != null && email != null) {
         _user = AuthUser(id: userId, email: email, displayName: displayName);
+        _apiClient.switchSession(userId);
         await _db.switchToUser(userId);
       } else {
         _user = null;
+        _apiClient.switchSession(null);
         await _db.switchToUser(null);
       }
     } catch (_) {
       _user = null;
+      _apiClient.switchSession(null);
       await _db.switchToUser(null);
     } finally {
       _isLoading = false;
@@ -151,6 +155,7 @@ class AuthService extends ChangeNotifier {
       await _tokenStorage.setUserDisplayName(displayName);
 
       _user = AuthUser(id: userId, email: userEmail, displayName: displayName);
+      _apiClient.switchSession(userId);
 
       // Switch active database to this user's isolated database
       await _db.switchToUser(userId);
@@ -182,6 +187,7 @@ class AuthService extends ChangeNotifier {
     } finally {
       await _tokenStorage.clearAll();
       _user = null;
+      _apiClient.switchSession(null);
       await _db.switchToUser(null);
       _isLoading = false;
       notifyListeners();

@@ -172,9 +172,13 @@ public class WorkoutService {
         Workout existing = workoutRepository.findByIdAndUserId(workoutId, user.getId())
                 .orElseThrow(() -> new AccessDeniedException("Workout not found or access denied"));
 
-        // Conflict check: if client provided clientUpdatedAt, check whether existing was updated later
-        if (request.getClientUpdatedAt() != null && existing.getUpdatedAt() != null) {
-            if (existing.getUpdatedAt().isAfter(request.getClientUpdatedAt().plusMillis(1000))) {
+        // Conflict check: optimistic locking via exact revision (version) or clientUpdatedAt
+        if (request.getVersion() != null && existing.getVersion() != null) {
+            if (!request.getVersion().equals(existing.getVersion())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Workout conflict: newer version exists on server");
+            }
+        } else if (request.getClientUpdatedAt() != null && existing.getUpdatedAt() != null) {
+            if (existing.getUpdatedAt().isAfter(request.getClientUpdatedAt())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Workout conflict: newer version exists on server");
             }
         }
@@ -259,6 +263,7 @@ public class WorkoutService {
         dto.setNotes(workout.getNotes());
         dto.setCreatedAt(workout.getCreatedAt());
         dto.setUpdatedAt(workout.getUpdatedAt());
+        dto.setVersion(workout.getVersion());
 
         if (workout.getExercises() != null) {
             List<WorkoutExerciseDto> exerciseDtos = workout.getExercises().stream().map(we -> {

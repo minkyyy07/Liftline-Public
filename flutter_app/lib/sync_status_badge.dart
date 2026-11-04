@@ -31,6 +31,37 @@ class SyncStatusBadge extends StatefulWidget {
 
 class _SyncStatusBadgeState extends State<SyncStatusBadge> {
   bool _retrying = false;
+  bool _resolving = false;
+
+  Future<void> _resolveKeepLocal() async {
+    if (_resolving) return;
+    setState(() => _resolving = true);
+    try {
+      if (AuthService.instance.isAuthenticated && AppDb.instance.isOpen) {
+        await CloudWorkoutSync().resolveConflictKeepLocal(AppDb.instance.db, widget.workoutId);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _resolving = false);
+        widget.onRetryFinished?.call();
+      }
+    }
+  }
+
+  Future<void> _resolveAcceptServer() async {
+    if (_resolving) return;
+    setState(() => _resolving = true);
+    try {
+      if (AuthService.instance.isAuthenticated && AppDb.instance.isOpen) {
+        await CloudWorkoutSync().resolveConflictAcceptServer(AppDb.instance.db, widget.workoutId);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _resolving = false);
+        widget.onRetryFinished?.call();
+      }
+    }
+  }
 
   Future<void> _retry() async {
     if (_retrying) return;
@@ -82,7 +113,7 @@ class _SyncStatusBadgeState extends State<SyncStatusBadge> {
       case 'conflict':
         badgeColor = const Color(0xFFFF7043);
         icon = Icons.warning_amber_rounded;
-        label = 'Конфликт (сохранено локально)';
+        label = 'Конфликт правок';
         break;
       case 'synced':
       default:
@@ -124,6 +155,41 @@ class _SyncStatusBadgeState extends State<SyncStatusBadge> {
                 ),
               ),
             ),
+          if (status == 'conflict') ...[
+            InkWell(
+              onTap: _resolving ? null : _resolveKeepLocal,
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Text(
+                  _resolving ? '...' : 'Оставить мою',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: AthleticTokens.electricBlue,
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ),
+            const Text('•', style: TextStyle(fontSize: 10, color: AthleticTokens.textMuted)),
+            InkWell(
+              onTap: _resolving ? null : _resolveAcceptServer,
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Text(
+                  _resolving ? '...' : 'Принять серверную',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFFF7043),
+                    decoration: TextDecoration.underline,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

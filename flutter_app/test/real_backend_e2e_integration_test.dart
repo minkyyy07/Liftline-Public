@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:liftline_app/auth/api_client.dart';
@@ -28,8 +29,14 @@ void main() {
     }
 
     if (!isBackendRunning) {
-      // Backend not running on localhost:8080 - scenario is verified when server is running
-      return;
+      final isIntegrationMandatory = Platform.environment['MANDATORY_INTEGRATION'] == 'true';
+      if (isIntegrationMandatory) {
+        fail('Backend is not running at $backendBaseUrl, but MANDATORY_INTEGRATION is enabled!');
+      } else {
+        // Explicitly report skip in standard test run
+        markTestSkipped('Backend is not running on $backendBaseUrl. Skipping live E2E test. Set MANDATORY_INTEGRATION=true to require server.');
+        return;
+      }
     }
 
     final tokenStorage = InMemoryTokenStorage();

@@ -15,6 +15,7 @@ public class WorkoutDto {
     private List<WorkoutExerciseDto> exercises = new ArrayList<>();
     private Instant createdAt;
     private Instant updatedAt;
+    private Long version;
 
     public WorkoutDto() {}
 
@@ -34,4 +35,6 @@ public class WorkoutDto {
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
+    public Long getVersion() { return version; }
+    public void setVersion(Long version) { this.version = version; }
 }

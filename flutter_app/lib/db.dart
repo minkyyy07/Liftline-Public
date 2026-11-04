@@ -1,7 +1,7 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-const int kDbVersion = 5;
+const int kDbVersion = 6;
 
 /// Singleton holder of the app database.
 class AppDb {
@@ -196,12 +196,14 @@ Future<Database> openLiftlineDb(String path, {DatabaseFactory? factory}) async {
         await migrateV2ToV3(db);
         await migrateV3ToV4(db);
         await migrateV4ToV5(db);
+        await migrateV5ToV6(db);
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) await migrateV1ToV2(db);
         if (oldV < 3) await migrateV2ToV3(db);
         if (oldV < 4) await migrateV3ToV4(db);
         if (oldV < 5) await migrateV4ToV5(db);
+        if (oldV < 6) await migrateV5ToV6(db);
       },
     ),
   );
@@ -411,4 +413,20 @@ Future<void> migrateV4ToV5(DatabaseExecutor db) async {
     )''');
   await db.execute('CREATE INDEX IF NOT EXISTS idx_workouts_server_id ON workouts(server_id)');
   await db.execute('CREATE INDEX IF NOT EXISTS idx_sync_queue_workout ON sync_queue(workout_id)');
+}
+
+/// v5 -> v6: server_version (revision) tracking and persistent workout_conflict_drafts table.
+/// Preserves conflicting server and local versions across app restarts, enabling explicit conflict resolution.
+Future<void> migrateV5ToV6(DatabaseExecutor db) async {
+  await db.execute('ALTER TABLE workouts ADD COLUMN server_version INTEGER NOT NULL DEFAULT 0');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS workout_conflict_drafts (
+      workout_id TEXT PRIMARY KEY,
+      server_id TEXT,
+      server_version INTEGER NOT NULL DEFAULT 0,
+      server_updated_at TEXT,
+      server_data_json TEXT NOT NULL,
+      local_data_json TEXT NOT NULL,
+      detected_at_utc INTEGER NOT NULL
+    )''');
 }

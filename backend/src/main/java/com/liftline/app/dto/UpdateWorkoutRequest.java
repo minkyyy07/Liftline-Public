@@ -14,6 +14,7 @@ import java.util.List;
 
 public class UpdateWorkoutRequest {
     private Instant clientUpdatedAt;
+    private Long version;
 
     @NotNull(message = "Workout date is required")
     private LocalDate workoutDate;
@@ -36,6 +37,9 @@ public class UpdateWorkoutRequest {
 
     public Instant getClientUpdatedAt() { return clientUpdatedAt; }
     public void setClientUpdatedAt(Instant clientUpdatedAt) { this.clientUpdatedAt = clientUpdatedAt; }
+
+    public Long getVersion() { return version; }
+    public void setVersion(Long version) { this.version = version; }
 
     public LocalDate getWorkoutDate() { return workoutDate; }
     public void setWorkoutDate(LocalDate workoutDate) { this.workoutDate = workoutDate; }

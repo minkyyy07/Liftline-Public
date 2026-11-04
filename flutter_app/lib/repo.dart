@@ -132,13 +132,17 @@ class WorkoutRepo {
   }
 
   /// [start] true: begins an active session now (date = today, fixed).
-  /// false: records a finished workout on [date] (backfill).
+  /// false: records a finished workout on [date] (backfill) or creates with [status].
+  /// [status] overrides default status: 'planned', 'active', or 'finished'.
   Future<String> createWorkout({
     required String title,
     required DateTime date,
     required bool start,
+    String? status,
   }) async {
-    if (start) {
+    final effectiveStatus = status ?? (start ? 'active' : 'finished');
+    final isStarting = effectiveStatus == 'active';
+    if (isStarting) {
       final a = await activeWorkout();
       if (a != null) throw ActiveWorkoutExists(a['id'] as String);
     }
@@ -148,11 +152,11 @@ class WorkoutRepo {
     await db.transaction((txn) async {
       await txn.insert('workouts', {
         'id': id,
-        'date': dateKey(start ? n : date),
+        'date': dateKey(isStarting ? n : date),
         'title': title.trim(),
-        'status': start ? 'active' : 'finished',
-        'started_at_utc': start ? _nowUtcMs : null,
-        'finished_at_utc': start ? null : null,
+        'status': effectiveStatus,
+        'started_at_utc': isStarting ? _nowUtcMs : null,
+        'finished_at_utc': null,
         'local_updated_at': nowMs,
         'sync_status': 'pending',
         'client_version': 1,

@@ -22,6 +22,7 @@ class AthleticTokens {
   static const Color electricBlue = Color(0xFF4D8DFF);
   static const Color electricOrange = Color(0xFFFF8A3D);
   static const Color success = Color(0xFF22C55E);
+  static const Color electricGreen = Color(0xFF22C55E);
   static const Color error = Color(0xFFFF5C5C);
 
   // Typography
@@ -47,6 +48,84 @@ class AthleticTokens {
   static const double radiusMd = 12.0;
   static const double radiusLg = 16.0;
   static const double radiusXl = 20.0;
+}
+
+/// Technical metric box displaying a prominent figure, unit, and label in Athletic Focus style.
+class AthleticMetricBox extends StatelessWidget {
+  final String label;
+  final String value;
+  final String? unit;
+  final Color? accentColor;
+
+  const AthleticMetricBox({
+    super.key,
+    required this.label,
+    required this.value,
+    this.unit,
+    this.accentColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AthleticTokens.surface,
+        borderRadius: BorderRadius.circular(AthleticTokens.radiusMd),
+        border: Border.all(color: AthleticTokens.borderSubtle),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+              color: AthleticTokens.textSecondary,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: accentColor ?? AthleticTokens.textPrimary,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                ),
+              ),
+              if (unit != null) ...[
+                const SizedBox(width: 4),
+                Text(
+                  unit!,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AthleticTokens.textMuted,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Reusable card in the Athletic Focus aesthetic.

@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'athletic_components.dart';
 import 'auth/auth_service.dart';
 import 'auth/cloud_workout_sync.dart';
 import 'auth/login_screen.dart';
 import 'auth/profile_screen.dart';
+import 'calc.dart';
 import 'data_events.dart';
 import 'db.dart';
 import 'repo.dart';
@@ -396,7 +398,8 @@ Future<String?> showCreateWorkoutDialog(
   final id = await repo.createWorkout(
     title: res.title,
     date: res.date,
-    start: res.start,
+    start: res.status == 'active',
+    status: res.status,
   );
   if (AuthService.instance.isAuthenticated) {
     try {
@@ -409,8 +412,8 @@ Future<String?> showCreateWorkoutDialog(
 class _NewWorkout {
   final String title;
   final DateTime date;
-  final bool start;
-  _NewWorkout(this.title, this.date, this.start);
+  final String status;
+  _NewWorkout(this.title, this.date, {required this.status});
 }
 
 class _NewWorkoutDialog extends StatefulWidget {
@@ -430,47 +433,54 @@ class _NewWorkoutDialogState extends State<_NewWorkoutDialog> {
   @override
   Widget build(BuildContext context) {
     final fmt = DateFormat('d MMMM yyyy', 'ru');
+    final isSelectedToday = isSameDay(_date, DateTime.now());
     return AlertDialog(
       title: const Text('Новая тренировка'),
-      content: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _title,
-              decoration: const InputDecoration(labelText: 'Название *'),
-              validator:
-                  (v) => InputValidators.validateRequiredText(v, 'Название'),
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.event),
-              label: Text('Дата записи: ${fmt.format(_date)}'),
-              onPressed: () async {
-                final d = await showDatePicker(
-                  context: context,
-                  initialDate: _date,
-                  firstDate: DateTime(2020),
-                  lastDate: DateTime(2035),
-                );
-                if (d != null) {
-                  setState(() {
-                    _date = dateOnly(d);
-                    _dateError = null;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              '«Начать сейчас» запускает тренировку сегодняшним числом. '
-              '«Записать завершённой» вносит прошедшую тренировку на выбранную дату.',
-              style: TextStyle(fontSize: 12, color: LlColors.textSecondary),
-            ),
-            if (_dateError != null)
-              Text(_dateError!, style: const TextStyle(color: LlColors.error)),
-          ],
+      content: SingleChildScrollView(
+        child: Form(
+          key: _form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                controller: _title,
+                decoration: const InputDecoration(labelText: 'Название *'),
+                validator:
+                    (v) => InputValidators.validateRequiredText(v, 'Название'),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.event),
+                label: Text('Дата: ${fmt.format(_date)}'),
+                onPressed: () async {
+                  final d = await showDatePicker(
+                    context: context,
+                    initialDate: _date,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2035),
+                  );
+                  if (d != null) {
+                    setState(() {
+                      _date = dateOnly(d);
+                      _dateError = null;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '«Запланировать» создает тренировку на выбранную дату.\n'
+                '«Начать сейчас» запускает сессию сегодня.\n'
+                '«Записать завершённой» вносит итоги прошедшей тренировки.',
+                style: TextStyle(fontSize: 12, color: LlColors.textSecondary),
+              ),
+              if (_dateError != null) ...[
+                const SizedBox(height: 6),
+                Text(_dateError!, style: const TextStyle(color: LlColors.error, fontSize: 12)),
+              ],
+            ],
+          ),
         ),
       ),
       actions: [
@@ -490,9 +500,12 @@ class _NewWorkoutDialogState extends State<_NewWorkoutDialog> {
               return;
             }
             setState(() => _submitting = true);
-            Navigator.pop(context, _NewWorkout(_title.text, _date, false));
+            Navigator.pop(
+              context,
+              _NewWorkout(_title.text, _date, status: 'finished'),
+            );
           },
-          child: const Text('Записать завершённой'),
+          child: const Text('Завершённая'),
         ),
         FilledButton(
           onPressed: _submitting ? null : () {
@@ -500,10 +513,14 @@ class _NewWorkoutDialogState extends State<_NewWorkoutDialog> {
             setState(() => _submitting = true);
             Navigator.pop(
               context,
-              _NewWorkout(_title.text, DateTime.now(), true),
+              _NewWorkout(
+                _title.text,
+                isSelectedToday ? DateTime.now() : _date,
+                status: isSelectedToday ? 'active' : 'planned',
+              ),
             );
           },
-          child: const Text('Начать сейчас'),
+          child: Text(isSelectedToday ? 'Начать сейчас' : 'Запланировать'),
         ),
       ],
     );
@@ -565,7 +582,7 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
   Future<void> _addExercise() async {
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => const _AddExerciseDialog(),
+      builder: (_) => const AddExerciseDialog(),
     );
     if (name == null) return;
     await _repo.addExercise(widget.workoutId, name);
@@ -692,6 +709,15 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
     }
   }
 
+  Future<void> _viewResult() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => WorkoutResultScreen(workoutId: widget.workoutId),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final w = _w;
@@ -707,6 +733,8 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
           PopupMenuButton<String>(
             onSelected: (v) {
               switch (v) {
+                case 'result':
+                  _viewResult();
                 case 'rename':
                   _rename();
                 case 'date':
@@ -719,6 +747,11 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
             },
             itemBuilder:
                 (_) => [
+                  if (status == 'finished')
+                    const PopupMenuItem(
+                      value: 'result',
+                      child: Text('Посмотреть результат'),
+                    ),
                   const PopupMenuItem(
                     value: 'rename',
                     child: Text('Переименовать'),
@@ -766,6 +799,14 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
               ),
             ),
           for (var i = 0; i < _exercises.length; i++) _exerciseCard(i),
+          if (_exercises.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _addExercise,
+              icon: const Icon(Icons.add),
+              label: const Text('Добавить упражнение'),
+            ),
+          ],
         ],
       ),
       floatingActionButton:
@@ -788,9 +829,22 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
               onPressed: _start,
               child: const Text('Начать сейчас'),
             ),
-            _ => OutlinedButton(
-              onPressed: _repeat,
-              child: const Text('Повторить тренировку'),
+            _ => Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _viewResult,
+                    icon: const Icon(Icons.insights),
+                    label: const Text('Посмотреть результат'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.outlined(
+                  tooltip: 'Повторить тренировку',
+                  onPressed: _repeat,
+                  icon: const Icon(Icons.replay),
+                ),
+              ],
             ),
           },
         ),
@@ -864,11 +918,14 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
                   ],
                 ),
                 if (sets.isEmpty)
-                  const Text(
-                    'Подходов нет',
-                    style: TextStyle(color: LlColors.textSecondary),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, bottom: 8),
+                    child: Text(
+                      'Подходов нет',
+                      style: TextStyle(color: LlColors.textSecondary),
+                    ),
                   )
-                else
+                else ...[
                   for (final s in sets)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -905,6 +962,24 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
                         ],
                       ),
                     ),
+                ],
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () async {
+                      await _repo.addSet(e['id'] as String);
+                      _load();
+                    },
+                    icon: const Icon(Icons.add, size: 16),
+                    label: const Text('Добавить подход', style: TextStyle(fontSize: 13)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -914,20 +989,27 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
   }
 }
 
-class _AddExerciseDialog extends StatefulWidget {
-  const _AddExerciseDialog();
+class AddExerciseDialog extends StatefulWidget {
+  const AddExerciseDialog({super.key});
   @override
-  State<_AddExerciseDialog> createState() => _AddExerciseDialogState();
+  State<AddExerciseDialog> createState() => _AddExerciseDialogState();
 }
 
-class _AddExerciseDialogState extends State<_AddExerciseDialog> {
+class _AddExerciseDialogState extends State<AddExerciseDialog> {
   final _form = GlobalKey<FormState>();
   final _c = TextEditingController();
   List<String> _names = [];
+  String _filter = '';
 
   @override
   void initState() {
     super.initState();
+    _c.addListener(() {
+      final text = _c.text.trim();
+      if (_filter != text) {
+        setState(() => _filter = text);
+      }
+    });
     _repo.activeExercises().then((l) {
       if (mounted) {
         setState(() => _names = l.map((r) => r['name'] as String).toList());
@@ -936,49 +1018,91 @@ class _AddExerciseDialogState extends State<_AddExerciseDialog> {
   }
 
   @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final filtered = _filter.isEmpty
+        ? _names
+        : _names.where((n) => n.toLowerCase().contains(_filter.toLowerCase())).toList();
+
     return AlertDialog(
       title: const Text('Добавить упражнение'),
-      content: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _c,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Название упражнения *',
-              ),
-              validator:
-                  (v) => InputValidators.validateRequiredText(v, 'Название'),
-            ),
-            if (_names.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Из справочника:',
-                  style: TextStyle(fontSize: 12, color: LlColors.textSecondary),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                controller: _c,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Название упражнения *',
+                  hintText: 'Поиск или ввод нового',
+                  prefixIcon: Icon(Icons.search),
                 ),
+                validator:
+                    (v) => InputValidators.validateRequiredText(v, 'Название'),
               ),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 160),
-                child: SingleChildScrollView(
-                  child: Wrap(
-                    spacing: 6,
-                    children: [
-                      for (final n in _names)
-                        ActionChip(
-                          label: Text(n),
-                          onPressed: () => setState(() => _c.text = n),
+              if (_names.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'Каталог упражнений:',
+                      style: TextStyle(fontSize: 12, color: LlColors.textSecondary),
+                    ),
+                    if (filtered.length != _names.length)
+                      Text(
+                        'Найдено: ${filtered.length}',
+                        style: const TextStyle(fontSize: 11, color: LlColors.accent),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 180),
+                  child: filtered.isEmpty
+                      ? Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: LlColors.surfaceHigh,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'В каталоге нет «$_filter». Будет создано новое упражнение.',
+                            style: const TextStyle(fontSize: 12, color: LlColors.textSecondary),
+                          ),
+                        )
+                      : SingleChildScrollView(
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final n in filtered)
+                                ActionChip(
+                                  label: Text(n),
+                                  avatar: const Icon(Icons.fitness_center, size: 14),
+                                  onPressed: () {
+                                    _c.text = n;
+                                    _c.selection = TextSelection.fromPosition(
+                                      TextPosition(offset: n.length),
+                                    );
+                                  },
+                                ),
+                            ],
+                          ),
                         ),
-                    ],
-                  ),
                 ),
-              ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
@@ -1436,11 +1560,14 @@ class _SetRowState extends State<_SetRow> {
     try {
       if (!_done) {
         final ok = await _save();
-        if (!ok) {
+        final currentWeight = InputValidators.parseNonNegativeDouble(_w.text);
+        final currentReps = InputValidators.parsePositiveInt(_r.text);
+        final isFilled = ok && currentWeight != null && currentReps != null && currentReps > 0;
+        if (!isFilled) {
           if (mounted) {
             _snack(
               context,
-              'Исправьте значения: вес ≥ 0, повторы ≥ 1, RIR 0–10',
+              'Заполните подход перед отметкой (вес ≥ 0, повторы ≥ 1)',
             );
           }
           return;
@@ -1825,6 +1952,383 @@ class ExerciseHistoryDetailScreen extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+// ====================== Экран результатов тренировки ======================
+class WorkoutResultScreen extends StatefulWidget {
+  final String workoutId;
+  const WorkoutResultScreen({super.key, required this.workoutId});
+
+  @override
+  State<WorkoutResultScreen> createState() => _WorkoutResultScreenState();
+}
+
+class _WorkoutResultScreenState extends State<WorkoutResultScreen> {
+  bool _loading = true;
+  Object? _error;
+  Rec? _workout;
+  List<Rec> _exercises = [];
+  Map<String, List<Rec>> _sets = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = _repo;
+      final w = await r.workout(widget.workoutId);
+      final ex = await r.workoutExercises(widget.workoutId);
+      final setsMap = <String, List<Rec>>{};
+      for (final e in ex) {
+        setsMap[e['id'] as String] = await r.sets(e['id'] as String);
+      }
+      if (mounted) {
+        setState(() {
+          _workout = w;
+          _exercises = ex;
+          _sets = setsMap;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e;
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_error != null || _workout == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Результаты тренировки')),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Не удалось загрузить тренировку: $_error'),
+              const SizedBox(height: 12),
+              FilledButton(onPressed: _load, child: const Text('Повторить')),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final w = _workout!;
+    final title = w['title'] as String? ?? 'Тренировка';
+    final dateStr = w['date'] as String? ?? '';
+    final durationMinutes = w['duration_minutes'] as int?;
+
+    // Сбор всех рабочих подходов и расчет реальных показателей
+    final allSetData = <SetData>[];
+    int completedExercisesCount = 0;
+    int completedSetsCount = 0;
+    int totalSetsCount = 0;
+
+    final exerciseStats = <Map<String, Object?>>[];
+
+    for (final e in _exercises) {
+      final sList = _sets[e['id'] as String] ?? [];
+      totalSetsCount += sList.length;
+      final eSetData = <SetData>[];
+      int exDoneSets = 0;
+
+      for (final s in sList) {
+        final completed = s['completed'] == 1;
+        final warmup = s['set_type'] == 'warmup';
+        final weight = (s['weight_kg'] as num?)?.toDouble() ?? 0.0;
+        final reps = (s['reps'] as int?) ?? 0;
+        final sd = SetData(weight, reps, completed: completed, warmup: warmup);
+        eSetData.add(sd);
+        allSetData.add(sd);
+        if (completed) {
+          completedSetsCount++;
+          exDoneSets++;
+        }
+      }
+
+      if (exDoneSets > 0) completedExercisesCount++;
+
+      final exVol = workingVolume(eSetData);
+      final bestE1rm = sessionE1rm(eSetData);
+
+      exerciseStats.add({
+        'exercise': e,
+        'sets': sList,
+        'volume': exVol,
+        'bestE1rm': bestE1rm,
+        'doneSets': exDoneSets,
+      });
+    }
+
+    final totalVolume = workingVolume(allSetData);
+    final bestSessionE1rm = sessionE1rm(allSetData);
+
+    return Scaffold(
+      backgroundColor: AthleticTokens.midnight,
+      appBar: AppBar(
+        title: const Text('Результаты тренировки'),
+        backgroundColor: AthleticTokens.surface,
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+        children: [
+          // Header Card
+          AthleticCard(
+            padding: const EdgeInsets.all(20),
+            borderColor: AthleticTokens.electricBlue.withValues(alpha: 0.4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const AthleticBadge(
+                      label: 'ЗАВЕРШЕНА',
+                      color: AthleticTokens.success,
+                      icon: Icons.check_circle_outline,
+                    ),
+                    Text(
+                      dateStr,
+                      style: const TextStyle(
+                        color: AthleticTokens.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: AthleticTokens.textPrimary,
+                    letterSpacing: -0.3,
+                  ),
+                ),
+                if (durationMinutes != null && durationMinutes > 0) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.timer_outlined,
+                        size: 16,
+                        color: AthleticTokens.electricBlue,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Время: $durationMinutes мин',
+                        style: const TextStyle(
+                          color: AthleticTokens.textSecondary,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Key metrics row
+          const AthleticSectionHeader(
+            title: 'Итоги тренировки',
+            icon: Icons.analytics_outlined,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: AthleticMetricBox(
+                  label: 'ОБЪЁМ НАГРУЗКИ',
+                  value: totalVolume > 0 ? _kg(totalVolume) : '0',
+                  unit: 'кг',
+                  accentColor: AthleticTokens.electricBlue,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: AthleticMetricBox(
+                  label: 'ВЫПОЛНЕНО',
+                  value: '$completedSetsCount / $totalSetsCount',
+                  unit: 'подходов',
+                  accentColor: AthleticTokens.electricOrange,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: AthleticMetricBox(
+                  label: 'УПРАЖНЕНИЙ',
+                  value: '$completedExercisesCount / ${_exercises.length}',
+                  unit: 'завершено',
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: AthleticMetricBox(
+                  label: 'ЛУЧШИЙ 1ПМ',
+                  value: bestSessionE1rm != null ? _kg(bestSessionE1rm.roundToDouble()) : '—',
+                  unit: 'кг (e1RM)',
+                  accentColor: AthleticTokens.success,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+
+          // Exercises Breakdown
+          const AthleticSectionHeader(
+            title: 'Выполненные упражнения',
+            icon: Icons.fitness_center,
+          ),
+          const SizedBox(height: 8),
+          if (_exercises.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(
+                child: Text(
+                  'Упражнения не были добавлены',
+                  style: TextStyle(color: AthleticTokens.textSecondary),
+                ),
+              ),
+            )
+          else
+            for (final stat in exerciseStats) ...[
+              _buildExerciseResultCard(stat),
+              const SizedBox(height: 10),
+            ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExerciseResultCard(Map<String, Object?> stat) {
+    final e = stat['exercise'] as Rec;
+    final sets = stat['sets'] as List<Rec>;
+    final vol = stat['volume'] as double;
+    final bestE1rm = stat['bestE1rm'] as double?;
+    final doneSets = stat['doneSets'] as int;
+
+    return AthleticCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  e['exercise_name'] as String,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: AthleticTokens.textPrimary,
+                  ),
+                ),
+              ),
+              Text(
+                'Подходов: $doneSets/${sets.length}',
+                style: const TextStyle(
+                  color: AthleticTokens.textSecondary,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+          if (vol > 0 || bestE1rm != null) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                if (vol > 0)
+                  Text(
+                    'Тоннаж: ${_kg(vol)} кг',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AthleticTokens.electricBlue,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                if (vol > 0 && bestE1rm != null)
+                  const Text('  •  ', style: TextStyle(color: AthleticTokens.textSecondary)),
+                if (bestE1rm != null)
+                  Text(
+                    'e1RM: ${_kg(bestE1rm.roundToDouble())} кг',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AthleticTokens.success,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
+          const Divider(height: 1, color: AthleticTokens.borderSubtle),
+          const SizedBox(height: 8),
+          for (final s in sets)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 28,
+                    child: Text(
+                      s['set_type'] == 'warmup' ? 'Р' : '${s['set_number']}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: s['set_type'] == 'warmup'
+                            ? LlColors.warning
+                            : AthleticTokens.textSecondary,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      '${_kg(s['weight_kg'])} кг × ${s['reps']}'
+                      '${s['rir'] != null ? '  (RIR ${s['rir']})' : ''}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: s['completed'] == 1
+                            ? AthleticTokens.textPrimary
+                            : AthleticTokens.textSecondary,
+                      ),
+                    ),
+                  ),
+                  Icon(
+                    s['completed'] == 1
+                        ? Icons.check_circle
+                        : Icons.radio_button_unchecked,
+                    size: 18,
+                    color: s['completed'] == 1
+                        ? AthleticTokens.success
+                        : AthleticTokens.textSecondary,
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }

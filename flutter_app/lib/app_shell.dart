@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'auth/sync_queue_runner.dart';
 import 'db.dart';
 import 'workouts_ui.dart';
 import 'nutrition_ui.dart';
@@ -55,7 +56,10 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _syncToday();
+    if (state == AppLifecycleState.resumed) {
+      _syncToday();
+      SyncQueueRunner.instance.onConnectivityOrResume();
+    }
   }
 
   void _syncToday() {

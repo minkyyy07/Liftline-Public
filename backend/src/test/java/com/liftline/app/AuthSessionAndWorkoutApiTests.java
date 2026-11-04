@@ -599,4 +599,76 @@ class AuthSessionAndWorkoutApiTests {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error").value("Workout conflict: newer version exists on server"));
     }
+
+    @Test
+    @DisplayName("Concurrent modifications on same revision: exactly one succeeds and one receives 409")
+    void concurrentRevisionModificationsConflict() throws Exception {
+        String email = "concurrent.revision@example.com";
+        String password = "password123";
+        userRepository.save(new User(email, passwordEncoder.encode(password)));
+
+        JsonNode login = loginUser(email, password);
+        String token = login.get("accessToken").asText();
+
+        CreateWorkoutRequest createReq = new CreateWorkoutRequest();
+        createReq.setTitle("Benchmark Session");
+        createReq.setWorkoutDate(LocalDate.now());
+
+        MvcResult createRes = mockMvc.perform(post("/api/workouts")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        JsonNode created = objectMapper.readTree(createRes.getResponse().getContentAsString());
+        String workoutId = created.get("id").asText();
+        Long initialVersion = created.get("version").asLong();
+
+        int threads = 2;
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        java.util.concurrent.CountDownLatch startLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch doneLatch = new java.util.concurrent.CountDownLatch(threads);
+        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger conflictCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        List<String> threadLogs = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        for (int i = 0; i < threads; i++) {
+            final int idx = i;
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    UpdateWorkoutRequest req = new UpdateWorkoutRequest();
+                    req.setTitle("Revision Update " + idx);
+                    req.setWorkoutDate(LocalDate.now());
+                    req.setVersion(initialVersion);
+
+                    MvcResult res = mockMvc.perform(put("/api/workouts/" + workoutId)
+                                    .header("Authorization", "Bearer " + token)
+                                    .contentType(MediaType.APPLICATION_JSON)
+                                    .content(objectMapper.writeValueAsString(req)))
+                            .andReturn();
+
+                    int status = res.getResponse().getStatus();
+                    threadLogs.add("Thread " + idx + " status: " + status + " body: " + res.getResponse().getContentAsString());
+                    if (status == 200) {
+                        successCount.incrementAndGet();
+                    } else if (status == 409) {
+                        conflictCount.incrementAndGet();
+                    }
+                } catch (Exception ex) {
+                    threadLogs.add("Thread " + idx + " exception: " + ex.getMessage());
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        doneLatch.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        executor.shutdown();
+
+        assertThat(successCount.get()).isEqualTo(1);
+        assertThat(conflictCount.get()).isEqualTo(1);
+    }
 }

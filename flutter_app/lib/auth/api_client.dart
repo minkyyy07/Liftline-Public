@@ -20,6 +20,13 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+class SessionAbortedException implements Exception {
+  final String message;
+  SessionAbortedException([this.message = 'Операция отменена из-за смены сессии пользователя.']);
+  @override
+  String toString() => message;
+}
+
 class ApiClient {
   static const String _kBaseUrlPrefKey = 'liftspire_api_base_url';
   static const String defaultEmulatorUrl = 'http://10.0.2.2:8080';
@@ -29,6 +36,24 @@ class ApiClient {
   final TokenStorage tokenStorage;
   final http.Client _client;
   void Function()? onSessionExpired;
+
+  int _sessionGeneration = 0;
+  String? _sessionAccountId;
+
+  int get sessionGeneration => _sessionGeneration;
+  String? get sessionAccountId => _sessionAccountId;
+
+  /// Updates the active session generation and account ID.
+  /// Cancels in-flight refreshes and prevents stale requests from mutating state.
+  void switchSession(String? newAccountId) {
+    _sessionGeneration++;
+    _sessionAccountId = newAccountId;
+    _refreshCompleter = null;
+  }
+
+  bool isCurrentSession(String? expectedAccountId, int expectedGeneration) {
+    return _sessionAccountId == expectedAccountId && _sessionGeneration == expectedGeneration;
+  }
 
   ApiClient({
     String? baseUrl,
@@ -60,16 +85,35 @@ class ApiClient {
   }
 
   Completer<bool>? _refreshCompleter;
+  int _refreshGeneration = -1;
+  String? _refreshAccountId;
 
-  Future<bool> _refreshAccessToken() async {
-    if (_refreshCompleter != null) {
+  Future<bool> _refreshAccessToken(String? accountId, int generation) async {
+    if (!isCurrentSession(accountId, generation)) return false;
+
+    if (_refreshCompleter != null &&
+        _refreshGeneration == generation &&
+        _refreshAccountId == accountId) {
       return _refreshCompleter!.future;
     }
+
     final completer = Completer<bool>();
     _refreshCompleter = completer;
+    _refreshGeneration = generation;
+    _refreshAccountId = accountId;
 
     try {
+      if (!isCurrentSession(accountId, generation)) {
+        completer.complete(false);
+        return false;
+      }
+
       final refreshToken = await tokenStorage.getRefreshToken();
+      if (!isCurrentSession(accountId, generation)) {
+        completer.complete(false);
+        return false;
+      }
+
       if (refreshToken == null || refreshToken.isEmpty) {
         completer.complete(false);
         return false;
@@ -82,10 +126,19 @@ class ApiClient {
         body: jsonEncode({'refreshToken': refreshToken}),
       );
 
+      if (!isCurrentSession(accountId, generation)) {
+        completer.complete(false);
+        return false;
+      }
+
       if (res.statusCode == 200) {
         final data = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
         final newAccess = data['accessToken'] as String?;
         final newRefresh = data['refreshToken'] as String?;
+        if (!isCurrentSession(accountId, generation)) {
+          completer.complete(false);
+          return false;
+        }
         if (newAccess != null) {
           await tokenStorage.setAccessToken(newAccess);
         }
@@ -102,7 +155,9 @@ class ApiClient {
       completer.complete(false);
       return false;
     } finally {
-      _refreshCompleter = null;
+      if (_refreshGeneration == generation) {
+        _refreshCompleter = null;
+      }
     }
   }
 
@@ -113,6 +168,13 @@ class ApiClient {
     Object? body,
     bool retryOn401 = true,
   }) async {
+    final reqAccountId = _sessionAccountId;
+    final reqGeneration = _sessionGeneration;
+
+    if (!isCurrentSession(reqAccountId, reqGeneration)) {
+      throw SessionAbortedException();
+    }
+
     final uri = Uri.parse('$_baseUrl$endpoint');
     final allHeaders = <String, String>{
       'Content-Type': 'application/json',
@@ -121,6 +183,10 @@ class ApiClient {
     };
 
     final token = await tokenStorage.getAccessToken();
+    if (!isCurrentSession(reqAccountId, reqGeneration)) {
+      throw SessionAbortedException();
+    }
+
     if (token != null && token.isNotEmpty && !allHeaders.containsKey('Authorization')) {
       allHeaders['Authorization'] = 'Bearer $token';
     }
@@ -152,22 +218,32 @@ class ApiClient {
           throw UnsupportedError('Unsupported HTTP method: $method');
       }
     } on SocketException {
+      if (!isCurrentSession(reqAccountId, reqGeneration)) throw SessionAbortedException();
       throw ApiException(
         statusCode: 0,
         message: 'Не удалось подключиться к серверу ($_baseUrl). Проверьте интернет или адрес сервера.',
       );
     } catch (e) {
-      if (e is ApiException) rethrow;
+      if (!isCurrentSession(reqAccountId, reqGeneration)) throw SessionAbortedException();
+      if (e is ApiException || e is SessionAbortedException) rethrow;
       throw ApiException(
         statusCode: 0,
         message: 'Ошибка сети: $e',
       );
     }
 
+    if (!isCurrentSession(reqAccountId, reqGeneration)) {
+      throw SessionAbortedException();
+    }
+
     if (res.statusCode == 401 && retryOn401) {
-      final refreshed = await _refreshAccessToken();
+      final refreshed = await _refreshAccessToken(reqAccountId, reqGeneration);
+      if (!isCurrentSession(reqAccountId, reqGeneration)) {
+        throw SessionAbortedException();
+      }
+
       if (refreshed) {
-        // Retry once with new token
+        // Retry once with new token within the same generation
         return request(
           method: method,
           endpoint: endpoint,
@@ -176,8 +252,10 @@ class ApiClient {
           retryOn401: false,
         );
       } else {
-        await tokenStorage.clearAll();
-        onSessionExpired?.call();
+        if (isCurrentSession(reqAccountId, reqGeneration)) {
+          await tokenStorage.clearAll();
+          onSessionExpired?.call();
+        }
         throw ApiException(
           statusCode: 401,
           message: 'Сессия истекла. Пожалуйста, выполните вход снова.',

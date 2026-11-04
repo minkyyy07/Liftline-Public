@@ -135,6 +135,9 @@ void main() {
       factory: factory,
     );
     expect(await fresh.getVersion(), kDbVersion);
+    final tables = await fresh.rawQuery("SELECT name FROM sqlite_master WHERE type='table'");
+    final tableNames = tables.map((t) => t['name']).toSet();
+    expect(tableNames.contains('workout_conflict_drafts'), isTrue);
     await fresh.close();
   });
 
