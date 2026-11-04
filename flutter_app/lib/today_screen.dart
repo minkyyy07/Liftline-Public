@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'concept_prototypes.dart';
 import 'main.dart';
 import 'theme.dart';
 import 'week_utils.dart';
@@ -40,6 +41,7 @@ class _TodayScreenState extends State<TodayScreen> {
   Set<String> _workoutDays = {};
   Map<String, Object?>? _active;
   Map<String, Object?>? _weight;
+  int _prototypeMode = 0; // 0 = classic, 1 = Athletic Focus, 2 = Minimalist Stream
 
   @override
   void initState() {
@@ -149,146 +151,205 @@ class _TodayScreenState extends State<TodayScreen> {
               onPressed: () => widget.onDateChanged(DateTime.now()),
               child: const Text('Сегодня'),
             ),
+          PopupMenuButton<int>(
+            icon: const Icon(Icons.style_outlined, color: LlColors.accent, size: 20),
+            tooltip: 'Концепты дизайна',
+            initialValue: _prototypeMode,
+            onSelected: (mode) => setState(() => _prototypeMode = mode),
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(
+                value: 0,
+                child: Text('Текущий интерфейс'),
+              ),
+              PopupMenuItem(
+                value: 1,
+                child: Text('Концепт 1: Athletic Focus'),
+              ),
+              PopupMenuItem(
+                value: 2,
+                child: Text('Концепт 2: Minimalist Stream'),
+              ),
+            ],
+          ),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-          children: [
-            if (_active != null) ...[
-              Card(
-                color: LlColors.surfaceHigh,
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: () async {
-                    await Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (_) => WorkoutOverviewScreen(
-                              workoutId: _active!['id'] as String,
-                            ),
-                      ),
-                    );
-                    _load();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.play_circle,
-                          color: LlColors.accent,
-                          size: 28,
+        child: _buildBodyContent(),
+      ),
+    );
+  }
+
+  Widget _buildBodyContent() {
+    if (_prototypeMode == 1) {
+      return Concept1AthleticView(
+        selectedDate: widget.selectedDate,
+        isFollowingToday: widget.isFollowingToday,
+        onDateChanged: widget.onDateChanged,
+        onGoToTab: widget.onGoToTab,
+        totals: _totals,
+        goals: _goals,
+        entriesCount: _entries,
+        workouts: _workouts,
+        workoutDays: _workoutDays,
+        activeWorkout: _active,
+        weightRecord: _weight,
+        onRefresh: _load,
+        onAddFood: _addFood,
+      );
+    }
+    if (_prototypeMode == 2) {
+      return Concept2MinimalistView(
+        selectedDate: widget.selectedDate,
+        isFollowingToday: widget.isFollowingToday,
+        onDateChanged: widget.onDateChanged,
+        onGoToTab: widget.onGoToTab,
+        totals: _totals,
+        goals: _goals,
+        entriesCount: _entries,
+        workouts: _workouts,
+        workoutDays: _workoutDays,
+        activeWorkout: _active,
+        weightRecord: _weight,
+        onRefresh: _load,
+        onAddFood: _addFood,
+      );
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      children: [
+        if (_active != null) ...[
+          Card(
+            color: LlColors.surfaceHigh,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder:
+                        (_) => WorkoutOverviewScreen(
+                          workoutId: _active!['id'] as String,
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                'Идёт тренировка',
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(color: LlColors.textSecondary),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                _active!['title'] as String? ?? '',
-                                style: Theme.of(context).textTheme.titleSmall
-                                    ?.copyWith(fontWeight: FontWeight.w600),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Icon(
-                          Icons.chevron_right,
-                          color: LlColors.accent,
-                          size: 24,
-                        ),
-                      ],
-                    ),
                   ),
+                );
+                _load();
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
                 ),
-              ),
-              const SizedBox(height: 12),
-            ],
-            _dateHeader(),
-            const SizedBox(height: 8),
-            _weekStrip(),
-            const SizedBox(height: 12),
-            if (_error != null)
-              _errorCard()
-            else if (_loading)
-              const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else ...[
-              _nutritionCard(),
-              const SizedBox(height: 16),
-              _weightCard(),
-              const SizedBox(height: 16),
-              _workoutsSection(),
-            ],
-            const SizedBox(height: 16),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final textScale = MediaQuery.textScalerOf(context).scale(1.0);
-                if (constraints.maxWidth < 380 || textScale > 1.2) {
-                  return Column(
-                    children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: () => widget.onGoToTab(1),
-                          icon: const Icon(Icons.fitness_center),
-                          label: const Text('Тренировки'),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _addFood,
-                          icon: const Icon(Icons.add),
-                          label: const Text('Добавить еду'),
-                        ),
-                      ),
-                    ],
-                  );
-                }
-                return Row(
+                child: Row(
                   children: [
+                    const Icon(
+                      Icons.play_circle,
+                      color: LlColors.accent,
+                      size: 28,
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: FilledButton.icon(
-                        onPressed: () => widget.onGoToTab(1),
-                        icon: const Icon(Icons.fitness_center),
-                        label: const Text('Тренировки'),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Идёт тренировка',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: LlColors.textSecondary),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _active!['title'] as String? ?? '',
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _addFood,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Добавить еду'),
-                      ),
+                    const Icon(
+                      Icons.chevron_right,
+                      color: LlColors.accent,
+                      size: 24,
                     ),
                   ],
-                );
-              },
+                ),
+              ),
             ),
-          ],
+          ),
+          const SizedBox(height: 12),
+        ],
+        _dateHeader(),
+        const SizedBox(height: 8),
+        _weekStrip(),
+        const SizedBox(height: 12),
+        if (_error != null)
+          _errorCard()
+        else if (_loading)
+          const Padding(
+            padding: EdgeInsets.all(32),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else ...[
+          _nutritionCard(),
+          const SizedBox(height: 16),
+          _weightCard(),
+          const SizedBox(height: 16),
+          _workoutsSection(),
+        ],
+        const SizedBox(height: 16),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final textScale = MediaQuery.textScalerOf(context).scale(1.0);
+            if (constraints.maxWidth < 380 || textScale > 1.2) {
+              return Column(
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () => widget.onGoToTab(1),
+                      icon: const Icon(Icons.fitness_center),
+                      label: const Text('Тренировки'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _addFood,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Добавить еду'),
+                    ),
+                  ),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: () => widget.onGoToTab(1),
+                    icon: const Icon(Icons.fitness_center),
+                    label: const Text('Тренировки'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _addFood,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Добавить еду'),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
-      ),
+      ],
     );
   }
 
