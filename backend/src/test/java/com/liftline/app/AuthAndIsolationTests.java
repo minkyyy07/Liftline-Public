@@ -366,10 +366,9 @@ class AuthAndIsolationTests {
         String token = jwtService.generateToken(user);
 
         // When authenticated, endpoint responds (not 401/403)
-        // /api/workouts has no controller yet, so Spring Boot returns 404 Not Found, but NOT 403 Forbidden!
         mockMvc.perform(get("/api/workouts")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -418,7 +417,7 @@ class AuthAndIsolationTests {
         // 4. Access protected endpoint using the extracted JWT
         mockMvc.perform(get("/api/workouts")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound()); // Authenticated (passed 401/403 filter), 404 because workouts controller is not yet implemented
+                .andExpect(status().isOk());
     }
 
     @Test

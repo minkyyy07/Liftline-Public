@@ -48,10 +48,15 @@ public class JwtService {
         return Jwts.builder()
                 .subject(user.getId().toString())
                 .claim("email", user.getEmail())
+                .claim("displayName", user.getDisplayName())
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(getSigningKey())
                 .compact();
+    }
+
+    public long getExpirationSeconds() {
+        return jwtProperties.getExpirationMs() / 1000;
     }
 
     public UUID parseUserId(String token) {

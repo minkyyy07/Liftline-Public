@@ -8,15 +8,125 @@ class AppDb {
   static final AppDb instance = AppDb._();
   AppDb._();
 
+  /// Creates an isolated AppDb instance for tests so it doesn't interfere with the singleton
+  AppDb.isolated();
+
   Database? _db;
   Database get db => _db!;
+  bool get isOpen => _db != null && _db!.isOpen;
+
+  String? _currentUserId;
+  String? get currentUserId => _currentUserId;
+  bool get isGuest => _currentUserId == null;
+
+  void Function()? onDatabaseSwitched;
 
   /// Test hook: use an already opened database.
-  void useDatabase(Database d) => _db = d;
+  void useDatabase(Database d) {
+    _db = d;
+    onDatabaseSwitched?.call();
+  }
 
-  Future<void> init() async {
+  Future<void> init({DatabaseFactory? factory}) async {
+    final f = factory ?? databaseFactory;
+    final dbPath = await f.getDatabasesPath();
+    _currentUserId = null;
+    _db = await openLiftlineDb(p.join(dbPath, 'liftline.db'), factory: f);
+    onDatabaseSwitched?.call();
+  }
+
+  /// Switches active database to a specific user account, or guest if [userId] is null.
+  /// Each account gets a physically isolated SQLite database file.
+  Future<void> switchToUser(String? userId, {DatabaseFactory? factory}) async {
+    if (_currentUserId == userId && _db != null && _db!.isOpen) return;
+
+    if (_db != null && _db!.isOpen) {
+      await _db!.close();
+      _db = null;
+    }
+
+    _currentUserId = userId;
+    final f = factory ?? databaseFactory;
+    final dbPath = await f.getDatabasesPath();
+    final String filename;
+    if (userId == null || userId.isEmpty) {
+      filename = 'liftline.db';
+    } else {
+      final safeId = userId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      filename = 'liftline_user_$safeId.db';
+    }
+
+    _db = await openLiftlineDb(p.join(dbPath, filename), factory: f);
+    onDatabaseSwitched?.call();
+  }
+
+  /// Explicitly copies guest workouts and exercises into the active account database.
+  /// Existing account data is not overwritten; duplicate IDs are skipped.
+  Future<int> copyGuestDataToCurrentAccount({DatabaseFactory? factory}) async {
+    if (isGuest) {
+      throw StateError('Cannot copy guest data while in guest mode. Login to an account first.');
+    }
+
+    final f = factory ?? databaseFactory;
     final dbPath = await getDatabasesPath();
-    _db = await openLiftlineDb(p.join(dbPath, 'liftline.db'));
+    final guestDbPath = p.join(dbPath, 'liftline.db');
+
+    if (!await f.databaseExists(guestDbPath)) return 0;
+
+    final guestDb = await f.openDatabase(
+      guestDbPath,
+      options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+    );
+
+    int copiedWorkouts = 0;
+    try {
+      final userDb = _db!;
+
+      // 1. Copy catalogue exercises
+      final exercises = await guestDb.query('exercises');
+      for (final ex in exercises) {
+        await userDb.insert(
+          'exercises',
+          ex,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+
+      // 2. Copy workouts
+      final workouts = await guestDb.query('workouts');
+      for (final w in workouts) {
+        final inserted = await userDb.insert(
+          'workouts',
+          w,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        if (inserted > 0) copiedWorkouts++;
+      }
+
+      // 3. Copy workout_exercises
+      final workoutExercises = await guestDb.query('workout_exercises');
+      for (final we in workoutExercises) {
+        await userDb.insert(
+          'workout_exercises',
+          we,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+
+      // 4. Copy set_entries
+      final setEntries = await guestDb.query('set_entries');
+      for (final se in setEntries) {
+        await userDb.insert(
+          'set_entries',
+          se,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    } finally {
+      await guestDb.close();
+    }
+
+    return copiedWorkouts;
   }
 }
 

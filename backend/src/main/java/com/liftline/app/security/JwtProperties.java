@@ -10,7 +10,8 @@ import java.nio.charset.StandardCharsets;
 @ConfigurationProperties(prefix = "jwt")
 public class JwtProperties {
     private String secret;
-    private long expirationMs = 86400000;
+    private long expirationMs = 900000; // 15 minutes default access token
+    private int refreshTokenDays = 30; // 30 days default refresh session
 
     @PostConstruct
     public void validate() {
@@ -33,4 +34,6 @@ public class JwtProperties {
     public void setSecret(String secret) { this.secret = secret; }
     public long getExpirationMs() { return expirationMs; }
     public void setExpirationMs(long expirationMs) { this.expirationMs = expirationMs; }
+    public int getRefreshTokenDays() { return refreshTokenDays; }
+    public void setRefreshTokenDays(int refreshTokenDays) { this.refreshTokenDays = refreshTokenDays; }
 }

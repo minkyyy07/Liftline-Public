@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'auth/auth_service.dart';
 import 'db.dart';
 import 'rest_timer.dart';
 export 'db.dart' show AppDb;
@@ -13,6 +14,7 @@ void main() async {
   Intl.defaultLocale = 'ru';
   await AppDb.instance.init();
   await RestTimerController.instance.load();
+  await AuthService.instance.init();
   runApp(const LiftlineApp());
 }
 

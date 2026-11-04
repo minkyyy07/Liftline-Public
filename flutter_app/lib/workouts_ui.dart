@@ -2,6 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'auth/auth_service.dart';
+import 'auth/cloud_workout_sync.dart';
+import 'auth/login_screen.dart';
+import 'auth/profile_screen.dart';
 import 'db.dart';
 import 'repo.dart';
 import 'rest_timer.dart';
@@ -65,11 +69,19 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
   @override
   void initState() {
     super.initState();
+    AppDb.instance.onDatabaseSwitched = () {
+      if (mounted) _load();
+    };
     _load();
   }
 
   Future<void> _load() async {
     try {
+      if (AuthService.instance.isAuthenticated) {
+        try {
+          await CloudWorkoutSync().syncFromServer(AppDb.instance.db);
+        } catch (_) {}
+      }
       final l = await _repo.listWorkouts();
       if (mounted) {
         setState(() {
@@ -97,17 +109,9 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
   }
 
   Future<void> _create() async {
-    final res = await showDialog<_NewWorkout>(
-      context: context,
-      builder: (_) => _NewWorkoutDialog(initialDate: widget.selectedDate),
-    );
-    if (res == null || !mounted) return;
     try {
-      final id = await _repo.createWorkout(
-        title: res.title,
-        date: res.date,
-        start: res.start,
-      );
+      final id = await showCreateWorkoutDialog(context, initialDate: widget.selectedDate);
+      if (id == null || !mounted) return;
       await _load();
       if (mounted) await _open(id);
     } on ActiveWorkoutExists catch (e) {
@@ -131,6 +135,37 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
       appBar: AppBar(
         title: const Text('Тренировки'),
         actions: [
+          ListenableBuilder(
+            listenable: AuthService.instance,
+            builder: (ctx, _) {
+              final isAuth = AuthService.instance.isAuthenticated;
+              final user = AuthService.instance.user;
+              return IconButton(
+                icon: CircleAvatar(
+                  radius: 14,
+                  backgroundColor: isAuth ? LlColors.secondary : Colors.white24,
+                  child: Text(
+                    isAuth
+                        ? (user?.presentationName.substring(0, 1).toUpperCase() ?? 'U')
+                        : '?',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                ),
+                tooltip: isAuth ? 'Профиль (${user?.presentationName})' : 'Войти в аккаунт',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => isAuth ? const ProfileScreen() : const LoginScreen(),
+                    ),
+                  ).then((_) => _load());
+                },
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Новая тренировка',
             icon: const Icon(Icons.add),
@@ -302,6 +337,29 @@ String _statusLabel(String s) => switch (s) {
   'planned' => 'запланирована',
   _ => 'завершена',
 };
+
+Future<String?> showCreateWorkoutDialog(
+  BuildContext context, {
+  required DateTime initialDate,
+}) async {
+  final res = await showDialog<_NewWorkout>(
+    context: context,
+    builder: (_) => _NewWorkoutDialog(initialDate: initialDate),
+  );
+  if (res == null) return null;
+  final repo = WorkoutRepo(AppDb.instance.db);
+  final id = await repo.createWorkout(
+    title: res.title,
+    date: res.date,
+    start: res.start,
+  );
+  if (AuthService.instance.isAuthenticated) {
+    try {
+      await CloudWorkoutSync().pushWorkout(AppDb.instance.db, id);
+    } catch (_) {}
+  }
+  return id;
+}
 
 class _NewWorkout {
   final String title;
@@ -545,6 +603,9 @@ class _WorkoutOverviewScreenState extends State<WorkoutOverviewScreen> {
     if (!ok) return;
     _gone = true;
     await _repo.deleteWorkout(widget.workoutId);
+    if (AuthService.instance.isAuthenticated) {
+      await CloudWorkoutSync().deleteWorkout(widget.workoutId);
+    }
     if (mounted) Navigator.pop(context);
   }
 
