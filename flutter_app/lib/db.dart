@@ -1,7 +1,7 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-const int kDbVersion = 4;
+const int kDbVersion = 5;
 
 /// Singleton holder of the app database.
 class AppDb {
@@ -19,12 +19,40 @@ class AppDb {
   String? get currentUserId => _currentUserId;
   bool get isGuest => _currentUserId == null;
 
+  int _accountEpoch = 0;
+  int get accountEpoch => _accountEpoch;
+
+  final List<void Function()> _switchListeners = [];
+  void addDatabaseSwitchListener(void Function() listener) {
+    if (!_switchListeners.contains(listener)) {
+      _switchListeners.add(listener);
+    }
+  }
+
+  void removeDatabaseSwitchListener(void Function() listener) {
+    _switchListeners.remove(listener);
+  }
+
   void Function()? onDatabaseSwitched;
+
+  void _notifyDatabaseSwitched() {
+    _accountEpoch++;
+    onDatabaseSwitched?.call();
+    for (final l in List<void Function()>.from(_switchListeners)) {
+      l();
+    }
+  }
+
+  /// Verifies if the active database and account epoch still match the request origin.
+  /// Prevents late network responses from Account A from writing into Account B.
+  bool isCurrentAccount(String? expectedUserId, int expectedEpoch) {
+    return _currentUserId == expectedUserId && _accountEpoch == expectedEpoch && isOpen;
+  }
 
   /// Test hook: use an already opened database.
   void useDatabase(Database d) {
     _db = d;
-    onDatabaseSwitched?.call();
+    _notifyDatabaseSwitched();
   }
 
   Future<void> init({DatabaseFactory? factory}) async {
@@ -32,7 +60,7 @@ class AppDb {
     final dbPath = await f.getDatabasesPath();
     _currentUserId = null;
     _db = await openLiftlineDb(p.join(dbPath, 'liftline.db'), factory: f);
-    onDatabaseSwitched?.call();
+    _notifyDatabaseSwitched();
   }
 
   /// Switches active database to a specific user account, or guest if [userId] is null.
@@ -57,7 +85,7 @@ class AppDb {
     }
 
     _db = await openLiftlineDb(p.join(dbPath, filename), factory: f);
-    onDatabaseSwitched?.call();
+    _notifyDatabaseSwitched();
   }
 
   /// Explicitly copies guest workouts and exercises into the active account database.
@@ -167,11 +195,13 @@ Future<Database> openLiftlineDb(String path, {DatabaseFactory? factory}) async {
         await migrateV1ToV2(db);
         await migrateV2ToV3(db);
         await migrateV3ToV4(db);
+        await migrateV4ToV5(db);
       },
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) await migrateV1ToV2(db);
         if (oldV < 3) await migrateV2ToV3(db);
         if (oldV < 4) await migrateV3ToV4(db);
+        if (oldV < 5) await migrateV4ToV5(db);
       },
     ),
   );
@@ -351,4 +381,34 @@ Future<void> migrateV3ToV4(DatabaseExecutor db) async {
       is_primary INTEGER NOT NULL DEFAULT 1
     )''');
   await db.execute('CREATE INDEX idx_bw_date ON body_weights(date)');
+}
+
+/// v4 -> v5: persistent workout sync state, client versioning, tombstones and sync queue.
+/// Ensures offline modifications, conflict tracking, and safe idempotent sync.
+Future<void> migrateV4ToV5(DatabaseExecutor db) async {
+  await db.execute('ALTER TABLE workouts ADD COLUMN server_id TEXT');
+  await db.execute('ALTER TABLE workouts ADD COLUMN local_updated_at INTEGER NOT NULL DEFAULT 0');
+  await db.execute('ALTER TABLE workouts ADD COLUMN server_updated_at TEXT');
+  await db.execute("ALTER TABLE workouts ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'synced'");
+  await db.execute('ALTER TABLE workouts ADD COLUMN sync_error TEXT');
+  await db.execute('ALTER TABLE workouts ADD COLUMN client_version INTEGER NOT NULL DEFAULT 1');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sync_tombstones (
+      id TEXT PRIMARY KEY,
+      server_id TEXT,
+      deleted_at_utc INTEGER NOT NULL,
+      sync_status TEXT NOT NULL DEFAULT 'pending'
+    )''');
+  await db.execute('''
+    CREATE TABLE IF NOT EXISTS sync_queue (
+      id TEXT PRIMARY KEY,
+      workout_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      client_version INTEGER NOT NULL,
+      created_at_utc INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT
+    )''');
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_workouts_server_id ON workouts(server_id)');
+  await db.execute('CREATE INDEX IF NOT EXISTS idx_sync_queue_workout ON sync_queue(workout_id)');
 }

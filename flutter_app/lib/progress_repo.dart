@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'calc.dart';
+import 'data_events.dart';
 import 'nutrition_calc.dart';
 import 'nutrition_repo.dart';
 import 'progress_calc.dart';
@@ -57,6 +58,7 @@ class ProgressRepo {
         where: 'id = ?',
         whereArgs: [ex['id']],
       );
+      AppDataEvents.instance.notifyWeightChanged();
       return ex['id'] as String;
     }
     final id = _uuid.v4();
@@ -66,6 +68,7 @@ class ProgressRepo {
       'kg': kg,
       'is_primary': 1,
     });
+    AppDataEvents.instance.notifyWeightChanged();
     return id;
   }
 
@@ -86,10 +89,13 @@ class ProgressRepo {
         whereArgs: [id],
       );
     });
+    AppDataEvents.instance.notifyWeightChanged();
   }
 
-  Future<void> deleteWeight(String id) =>
-      db.delete('body_weights', where: 'id = ?', whereArgs: [id]);
+  Future<void> deleteWeight(String id) async {
+    await db.delete('body_weights', where: 'id = ?', whereArgs: [id]);
+    AppDataEvents.instance.notifyWeightChanged();
+  }
 
   // ---------- strength ----------
   /// Catalogue exercises that have at least one finished session.

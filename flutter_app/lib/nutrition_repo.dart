@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import 'data_events.dart';
 import 'nutrition_calc.dart';
 import 'repo.dart' show Rec;
 import 'week_utils.dart';
@@ -115,6 +116,7 @@ class NutritionRepo {
         whereArgs: [id],
       );
     }
+    AppDataEvents.instance.notifyNutritionChanged();
     return rid;
   }
 
@@ -153,6 +155,7 @@ class NutritionRepo {
         whereArgs: [id],
       );
     }
+    AppDataEvents.instance.notifyNutritionChanged();
     return nid;
   }
 
@@ -188,11 +191,14 @@ class NutritionRepo {
       'date': date,
       'meal': m,
     });
+    AppDataEvents.instance.notifyNutritionChanged();
     return nid;
   }
 
-  Future<void> delete(String id) =>
-      db.delete('nutrition_entries', where: 'id = ?', whereArgs: [id]);
+  Future<void> delete(String id) async {
+    await db.delete('nutrition_entries', where: 'id = ?', whereArgs: [id]);
+    AppDataEvents.instance.notifyNutritionChanged();
+  }
 
   // ---------- catalogue ----------
   Future<List<Rec>> recentFoods({int limit = 12}) => db.query(
@@ -274,5 +280,6 @@ class NutritionRepo {
         'carbs': g.carbs,
       });
     });
+    AppDataEvents.instance.notifyNutritionChanged();
   }
 }

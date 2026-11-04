@@ -10,7 +10,6 @@ import java.util.UUID;
 @Table(name = "workout_exercise")
 public class WorkoutExercise {
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false, unique = true)
     private UUID id;
 
@@ -24,7 +23,7 @@ public class WorkoutExercise {
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @Column(name = "updated_at", nullable = false)
@@ -35,6 +34,9 @@ public class WorkoutExercise {
 
     @PrePersist
     public void prePersist() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
         Instant now = Instant.now();
         if (createdAt == null) createdAt = now;
         if (updatedAt == null) updatedAt = now;
@@ -42,6 +44,7 @@ public class WorkoutExercise {
 
     @PreUpdate
     public void preUpdate() {
+        if (createdAt == null) createdAt = Instant.now();
         updatedAt = Instant.now();
     }
 

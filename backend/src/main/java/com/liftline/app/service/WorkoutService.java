@@ -15,13 +15,18 @@ import com.liftline.app.repository.WorkoutExerciseRepository;
 import com.liftline.app.repository.WorkoutRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.time.Instant;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -95,10 +100,30 @@ public class WorkoutService {
         return workoutRepository.save(workout);
     }
 
+    public WorkoutDto createWorkoutDtoFromRequest(CreateWorkoutRequest request) {
+        Workout created = createWorkoutFromRequest(request);
+        return toDto(created);
+    }
+
+    public WorkoutDto updateWorkoutDtoFromRequest(UUID workoutId, UpdateWorkoutRequest request) {
+        Workout updated = updateWorkoutFromRequest(workoutId, request);
+        return toDto(updated);
+    }
+
     public Workout createWorkoutFromRequest(CreateWorkoutRequest request) {
         User user = getAuthenticatedUser();
+        if (request.getId() != null) {
+            Optional<Workout> existing = workoutRepository.findByIdAndUserId(request.getId(), user.getId());
+            if (existing.isPresent()) {
+                // Idempotent: return already created workout
+                return existing.get();
+            }
+        }
         Workout workout = new Workout();
         workout.setUser(user);
+        if (request.getId() != null) {
+            workout.setId(request.getId());
+        }
         workout.setWorkoutDate(request.getWorkoutDate());
         workout.setTitle(request.getTitle().trim());
         workout.setDurationMinutes(request.getDurationMinutes());
@@ -107,13 +132,21 @@ public class WorkoutService {
         if (request.getExercises() != null) {
             for (WorkoutExerciseDto weDto : request.getExercises()) {
                 WorkoutExercise exercise = new WorkoutExercise();
+                if (weDto.getId() != null) {
+                    exercise.setId(weDto.getId());
+                }
                 exercise.setWorkout(workout);
                 exercise.setExerciseName(weDto.getExerciseName().trim());
                 exercise.setSortOrder(weDto.getSortOrder() != null ? weDto.getSortOrder() : 0);
+                exercise.setCreatedAt(Instant.now());
+                exercise.setUpdatedAt(Instant.now());
 
                 if (weDto.getSets() != null) {
                     for (SetEntryDto seDto : weDto.getSets()) {
                         SetEntry setEntry = new SetEntry();
+                        if (seDto.getId() != null) {
+                            setEntry.setId(seDto.getId());
+                        }
                         setEntry.setExercise(exercise);
                         setEntry.setSetNumber(seDto.getSetNumber());
                         setEntry.setWeightKg(seDto.getWeightKg());
@@ -123,6 +156,8 @@ public class WorkoutService {
                         setEntry.setSetType(seDto.getSetType());
                         setEntry.setRestSeconds(seDto.getRestSeconds());
                         setEntry.setNotes(seDto.getNotes());
+                        setEntry.setCreatedAt(Instant.now());
+                        setEntry.setUpdatedAt(Instant.now());
                         exercise.getSets().add(setEntry);
                     }
                 }
@@ -137,6 +172,13 @@ public class WorkoutService {
         Workout existing = workoutRepository.findByIdAndUserId(workoutId, user.getId())
                 .orElseThrow(() -> new AccessDeniedException("Workout not found or access denied"));
 
+        // Conflict check: if client provided clientUpdatedAt, check whether existing was updated later
+        if (request.getClientUpdatedAt() != null && existing.getUpdatedAt() != null) {
+            if (existing.getUpdatedAt().isAfter(request.getClientUpdatedAt().plusMillis(1000))) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Workout conflict: newer version exists on server");
+            }
+        }
+
         existing.setTitle(request.getTitle().trim());
         existing.setWorkoutDate(request.getWorkoutDate());
         existing.setDurationMinutes(request.getDurationMinutes());
@@ -146,13 +188,21 @@ public class WorkoutService {
         if (request.getExercises() != null) {
             for (WorkoutExerciseDto weDto : request.getExercises()) {
                 WorkoutExercise exercise = new WorkoutExercise();
+                if (weDto.getId() != null) {
+                    exercise.setId(weDto.getId());
+                }
                 exercise.setWorkout(existing);
                 exercise.setExerciseName(weDto.getExerciseName().trim());
                 exercise.setSortOrder(weDto.getSortOrder() != null ? weDto.getSortOrder() : 0);
+                exercise.setCreatedAt(Instant.now());
+                exercise.setUpdatedAt(Instant.now());
 
                 if (weDto.getSets() != null) {
                     for (SetEntryDto seDto : weDto.getSets()) {
                         SetEntry setEntry = new SetEntry();
+                        if (seDto.getId() != null) {
+                            setEntry.setId(seDto.getId());
+                        }
                         setEntry.setExercise(exercise);
                         setEntry.setSetNumber(seDto.getSetNumber());
                         setEntry.setWeightKg(seDto.getWeightKg());
@@ -162,6 +212,8 @@ public class WorkoutService {
                         setEntry.setSetType(seDto.getSetType());
                         setEntry.setRestSeconds(seDto.getRestSeconds());
                         setEntry.setNotes(seDto.getNotes());
+                        setEntry.setCreatedAt(Instant.now());
+                        setEntry.setUpdatedAt(Instant.now());
                         exercise.getSets().add(setEntry);
                     }
                 }
@@ -188,9 +240,14 @@ public class WorkoutService {
 
     public void deleteWorkoutForCurrentUser(UUID workoutId) {
         User user = getAuthenticatedUser();
-        Workout existing = workoutRepository.findByIdAndUserId(workoutId, user.getId())
-                .orElseThrow(() -> new AccessDeniedException("Workout not found or access denied"));
-        workoutRepository.delete(existing);
+        Optional<Workout> workoutOpt = workoutRepository.findById(workoutId);
+        if (workoutOpt.isPresent()) {
+            Workout workout = workoutOpt.get();
+            if (!workout.getUser().getId().equals(user.getId())) {
+                throw new AccessDeniedException("Workout not found or access denied");
+            }
+            workoutRepository.delete(workout);
+        }
     }
 
     public WorkoutDto toDto(Workout workout) {
@@ -270,8 +327,13 @@ public class WorkoutService {
         if (ownerId == null) {
             throw new IllegalArgumentException("Owner ID must not be null");
         }
-        Workout existing = workoutRepository.findByIdAndUserId(workoutId, ownerId)
-                .orElseThrow(() -> new AccessDeniedException("Workout not found or access denied"));
-        workoutRepository.delete(existing);
+        Optional<Workout> workoutOpt = workoutRepository.findById(workoutId);
+        if (workoutOpt.isPresent()) {
+            Workout workout = workoutOpt.get();
+            if (!workout.getUser().getId().equals(ownerId)) {
+                throw new AccessDeniedException("Workout not found or access denied");
+            }
+            workoutRepository.delete(workout);
+        }
     }
 }

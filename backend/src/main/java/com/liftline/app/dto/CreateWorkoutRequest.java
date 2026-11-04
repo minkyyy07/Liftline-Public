@@ -10,8 +10,11 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public class CreateWorkoutRequest {
+    private UUID id;
+
     @NotNull(message = "Workout date is required")
     private LocalDate workoutDate;
 
@@ -30,6 +33,9 @@ public class CreateWorkoutRequest {
     private List<WorkoutExerciseDto> exercises = new ArrayList<>();
 
     public CreateWorkoutRequest() {}
+
+    public UUID getId() { return id; }
+    public void setId(UUID id) { this.id = id; }
 
     public LocalDate getWorkoutDate() { return workoutDate; }
     public void setWorkoutDate(LocalDate workoutDate) { this.workoutDate = workoutDate; }

@@ -48,16 +48,16 @@ public class WorkoutController {
 
     @PostMapping
     public ResponseEntity<WorkoutDto> createWorkout(@Valid @RequestBody CreateWorkoutRequest request) {
-        Workout created = workoutService.createWorkoutFromRequest(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(workoutService.toDto(created));
+        WorkoutDto created = workoutService.createWorkoutDtoFromRequest(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<WorkoutDto> updateWorkout(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateWorkoutRequest request) {
-        Workout updated = workoutService.updateWorkoutFromRequest(id, request);
-        return ResponseEntity.ok(workoutService.toDto(updated));
+        WorkoutDto updated = workoutService.updateWorkoutDtoFromRequest(id, request);
+        return ResponseEntity.ok(updated);
     }
 
     @DeleteMapping("/{id}")

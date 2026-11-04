@@ -455,4 +455,148 @@ class AuthSessionAndWorkoutApiTests {
 
         authRateLimiter.reset();
     }
+
+    @Test
+    @DisplayName("Concurrent refresh token requests with same token: at most one succeeds, cannot both succeed")
+    void concurrentRefreshTokenRotationHandledSafely() throws Exception {
+        String email = "concurrent.refresh@example.com";
+        String password = "password123";
+        userRepository.save(new User(email, passwordEncoder.encode(password)));
+
+        JsonNode login = loginUser(email, password);
+        String initialRefresh = login.get("refreshToken").asText();
+
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        java.util.concurrent.CountDownLatch startLatch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch doneLatch = new java.util.concurrent.CountDownLatch(2);
+
+        java.util.concurrent.atomic.AtomicInteger successCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger unauthorizedCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        for (int i = 0; i < 2; i++) {
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    MvcResult res = mockMvc.perform(post("/api/auth/refresh")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new RefreshTokenRequest(initialRefresh))))
+                            .andReturn();
+                    int status = res.getResponse().getStatus();
+                    if (status == 200) {
+                        successCount.incrementAndGet();
+                    } else if (status == 401) {
+                        unauthorizedCount.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    unauthorizedCount.incrementAndGet();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        // Fire both threads simultaneously
+        startLatch.countDown();
+        doneLatch.await(5, java.util.concurrent.TimeUnit.SECONDS);
+        executor.shutdown();
+
+        // Concurrency guarantee: TWO concurrent requests CANNOT both succeed with the same refresh token!
+        assertThat(successCount.get()).isLessThanOrEqualTo(1);
+        assertThat(unauthorizedCount.get()).isGreaterThanOrEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Client-supplied UUID in POST /api/workouts is respected and retries are idempotent")
+    void workoutClientUuidAndIdempotency() throws Exception {
+        String email = "idempotent.workout@example.com";
+        String password = "password123";
+        userRepository.save(new User(email, passwordEncoder.encode(password)));
+
+        JsonNode login = loginUser(email, password);
+        String token = login.get("accessToken").asText();
+
+        UUID clientWorkoutId = UUID.randomUUID();
+        CreateWorkoutRequest req = new CreateWorkoutRequest();
+        req.setId(clientWorkoutId);
+        req.setTitle("Chest and Shoulders");
+        req.setWorkoutDate(LocalDate.now());
+        req.setDurationMinutes(45);
+
+        // First POST
+        MvcResult res1 = mockMvc.perform(post("/api/workouts")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(clientWorkoutId.toString()))
+                .andReturn();
+
+        // Second POST with identical client UUID (simulating network timeout retry)
+        MvcResult res2 = mockMvc.perform(post("/api/workouts")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").value(clientWorkoutId.toString()))
+                .andReturn();
+
+        // Verify only ONE workout exists in database for this user
+        MvcResult listRes = mockMvc.perform(get("/api/workouts")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        JsonNode list = objectMapper.readTree(listRes.getResponse().getContentAsString());
+        assertThat(list.size()).isEqualTo(1);
+        assertThat(list.get(0).get("id").asText()).isEqualTo(clientWorkoutId.toString());
+    }
+
+    @Test
+    @DisplayName("Workout update with stale clientUpdatedAt detects conflict and returns 409")
+    void workoutUpdateConflictDetection() throws Exception {
+        String email = "conflict.workout@example.com";
+        String password = "password123";
+        userRepository.save(new User(email, passwordEncoder.encode(password)));
+
+        JsonNode login = loginUser(email, password);
+        String token = login.get("accessToken").asText();
+
+        CreateWorkoutRequest createReq = new CreateWorkoutRequest();
+        createReq.setTitle("Leg Day");
+        createReq.setWorkoutDate(LocalDate.now());
+
+        MvcResult createRes = mockMvc.perform(post("/api/workouts")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        JsonNode created = objectMapper.readTree(createRes.getResponse().getContentAsString());
+        String workoutId = created.get("id").asText();
+
+        // First update from Device A at time T1
+        UpdateWorkoutRequest updateA = new UpdateWorkoutRequest();
+        updateA.setTitle("Leg Day - Device A");
+        updateA.setWorkoutDate(LocalDate.now());
+
+        mockMvc.perform(put("/api/workouts/" + workoutId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateA)))
+                .andExpect(status().isOk());
+
+        // Update from Device B based on an older stale timestamp (e.g. 1 hour ago)
+        UpdateWorkoutRequest updateB = new UpdateWorkoutRequest();
+        updateB.setTitle("Leg Day - Device B Overwrite");
+        updateB.setWorkoutDate(LocalDate.now());
+        updateB.setClientUpdatedAt(java.time.Instant.now().minusSeconds(3600));
+
+        mockMvc.perform(put("/api/workouts/" + workoutId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateB)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("Workout conflict: newer version exists on server"));
+    }
 }

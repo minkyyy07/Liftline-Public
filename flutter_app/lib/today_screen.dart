@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'athletic_components.dart';
@@ -5,6 +6,7 @@ import 'auth/auth_service.dart';
 import 'auth/cloud_workout_sync.dart';
 import 'auth/login_screen.dart';
 import 'auth/profile_screen.dart';
+import 'data_events.dart';
 import 'db.dart';
 import 'nutrition_calc.dart';
 import 'nutrition_repo.dart';
@@ -12,6 +14,7 @@ import 'nutrition_ui.dart';
 import 'progress_repo.dart';
 import 'progress_ui.dart';
 import 'repo.dart';
+import 'sync_status_badge.dart';
 import 'week_utils.dart';
 import 'workouts_ui.dart';
 
@@ -50,33 +53,56 @@ class _TodayScreenState extends State<TodayScreen> {
   Set<String> _workoutDays = {};
   Map<String, Object?>? _active;
   Map<String, Object?>? _weight;
+  StreamSubscription? _eventsSub;
+  void Function()? _dbListener;
 
   @override
   void initState() {
     super.initState();
-    AppDb.instance.onDatabaseSwitched = () {
-      if (mounted) _load();
+    _dbListener = () {
+      if (mounted) _load(fromNetwork: true);
     };
-    _load();
+    AppDb.instance.addDatabaseSwitchListener(_dbListener!);
+    _eventsSub = AppDataEvents.instance.stream.listen((_) {
+      if (mounted) _load(fromNetwork: false);
+    });
+    _load(fromNetwork: true);
+  }
+
+  @override
+  void dispose() {
+    if (_dbListener != null) {
+      AppDb.instance.removeDatabaseSwitchListener(_dbListener!);
+    }
+    _eventsSub?.cancel();
+    super.dispose();
   }
 
   @override
   void didUpdateWidget(covariant TodayScreen old) {
     super.didUpdateWidget(old);
-    if (!isSameDay(old.selectedDate, widget.selectedDate)) _load();
+    if (!isSameDay(old.selectedDate, widget.selectedDate)) _load(fromNetwork: false);
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool fromNetwork = false}) async {
+    final accountUserId = AppDb.instance.currentUserId;
+    final accountEpoch = AppDb.instance.accountEpoch;
+
+    if (_workouts.isEmpty) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
-      if (AuthService.instance.isAuthenticated) {
+      if (fromNetwork && AuthService.instance.isAuthenticated) {
         try {
           await CloudWorkoutSync().syncFromServer(AppDb.instance.db);
         } catch (_) {}
       }
+      if (!AppDb.instance.isCurrentAccount(accountUserId, accountEpoch)) return;
+      if (!mounted) return;
+
       final db = AppDb.instance.db;
       final key = dateKey(widget.selectedDate);
       final nrepo = NutritionRepo(db);
@@ -97,7 +123,10 @@ class _TodayScreenState extends State<TodayScreen> {
       final active = await WorkoutRepo(db).activeWorkout();
       final weight = await ProgressRepo(db).latestUpTo(key);
       final totals = sumNutrients(nutrition.map(entryTotals));
+
+      if (!AppDb.instance.isCurrentAccount(accountUserId, accountEpoch)) return;
       if (!mounted) return;
+
       setState(() {
         _totals = totals;
         _goals = goals;
@@ -109,11 +138,13 @@ class _TodayScreenState extends State<TodayScreen> {
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e;
-        _loading = false;
-      });
+      if (!AppDb.instance.isCurrentAccount(accountUserId, accountEpoch)) return;
+      if (mounted) {
+        setState(() {
+          _error = e;
+          _loading = false;
+        });
+      }
     }
   }
 
@@ -552,6 +583,12 @@ class _TodayScreenState extends State<TodayScreen> {
                     fontSize: 12,
                   ),
                 ),
+                SyncStatusBadge(
+                  workoutId: _active!['id'] as String,
+                  syncStatus: _active!['sync_status'] as String? ?? 'synced',
+                  syncError: _active!['sync_error'] as String?,
+                  onRetryFinished: () => _load(fromNetwork: false),
+                ),
                 const SizedBox(height: 14),
                 SizedBox(
                   width: double.infinity,
@@ -664,6 +701,12 @@ class _TodayScreenState extends State<TodayScreen> {
                     color: AthleticTokens.textSecondary,
                     fontSize: 12,
                   ),
+                ),
+                SyncStatusBadge(
+                  workoutId: primary['id'] as String,
+                  syncStatus: primary['sync_status'] as String? ?? 'synced',
+                  syncError: primary['sync_error'] as String?,
+                  onRetryFinished: () => _load(fromNetwork: false),
                 ),
                 const SizedBox(height: 14),
                 SizedBox(

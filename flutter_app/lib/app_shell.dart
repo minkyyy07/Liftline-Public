@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'db.dart';
 import 'workouts_ui.dart';
 import 'nutrition_ui.dart';
 import 'progress_ui.dart';
@@ -27,14 +28,26 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    AppDb.instance.addDatabaseSwitchListener(_onAccountSwitched);
     _midnightCheck = Timer.periodic(
       const Duration(minutes: 1),
       (_) => _syncToday(),
     );
   }
 
+  void _onAccountSwitched() {
+    if (mounted) {
+      setState(() {
+        _currentIndex = 0;
+        _selectedDate = dateOnly(DateTime.now());
+        _followToday = true;
+      });
+    }
+  }
+
   @override
   void dispose() {
+    AppDb.instance.removeDatabaseSwitchListener(_onAccountSwitched);
     _midnightCheck?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -63,16 +76,27 @@ class _MainNavigationScreenState extends State<MainNavigationScreen>
 
   @override
   Widget build(BuildContext context) {
+    final epoch = AppDb.instance.accountEpoch;
+    final userId = AppDb.instance.currentUserId ?? 'guest';
     final screens = [
       TodayScreen(
+        key: ValueKey('today_${epoch}_$userId'),
         selectedDate: _selectedDate,
         isFollowingToday: _followToday,
         onDateChanged: _selectDate,
         onGoToTab: (i) => setState(() => _currentIndex = i),
       ),
-      WorkoutsScreen(selectedDate: _selectedDate),
-      NutritionScreen(selectedDate: _selectedDate, onDateChanged: _selectDate),
+      WorkoutsScreen(
+        key: ValueKey('workouts_${epoch}_$userId'),
+        selectedDate: _selectedDate,
+      ),
+      NutritionScreen(
+        key: ValueKey('nutrition_${epoch}_$userId'),
+        selectedDate: _selectedDate,
+        onDateChanged: _selectDate,
+      ),
       ProgressScreen(
+        key: ValueKey('progress_${epoch}_$userId'),
         selectedDate: _selectedDate,
         onGoToTab: (i) => setState(() => _currentIndex = i),
       ),

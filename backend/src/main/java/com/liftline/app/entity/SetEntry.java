@@ -9,7 +9,6 @@ import java.util.UUID;
 @Table(name = "set_entry")
 public class SetEntry {
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false, unique = true)
     private UUID id;
 
@@ -41,7 +40,7 @@ public class SetEntry {
     @Column(name = "notes", length = 500)
     private String notes;
 
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     @Column(name = "updated_at", nullable = false)
@@ -49,6 +48,9 @@ public class SetEntry {
 
     @PrePersist
     public void prePersist() {
+        if (id == null) {
+            id = UUID.randomUUID();
+        }
         Instant now = Instant.now();
         if (createdAt == null) createdAt = now;
         if (updatedAt == null) updatedAt = now;
@@ -56,6 +58,7 @@ public class SetEntry {
 
     @PreUpdate
     public void preUpdate() {
+        if (createdAt == null) createdAt = Instant.now();
         updatedAt = Instant.now();
     }
 

@@ -7,11 +7,14 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
 public class UpdateWorkoutRequest {
+    private Instant clientUpdatedAt;
+
     @NotNull(message = "Workout date is required")
     private LocalDate workoutDate;
 
@@ -30,6 +33,9 @@ public class UpdateWorkoutRequest {
     private List<WorkoutExerciseDto> exercises = new ArrayList<>();
 
     public UpdateWorkoutRequest() {}
+
+    public Instant getClientUpdatedAt() { return clientUpdatedAt; }
+    public void setClientUpdatedAt(Instant clientUpdatedAt) { this.clientUpdatedAt = clientUpdatedAt; }
 
     public LocalDate getWorkoutDate() { return workoutDate; }
     public void setWorkoutDate(LocalDate workoutDate) { this.workoutDate = workoutDate; }

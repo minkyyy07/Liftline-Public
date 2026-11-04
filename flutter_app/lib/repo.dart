@@ -1,5 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
+import 'data_events.dart';
 import 'week_utils.dart';
 
 const int kDefaultRestSec = 120;
@@ -27,6 +28,49 @@ class WorkoutRepo {
   WorkoutRepo(this.db, {DateTime Function()? now}) : now = now ?? DateTime.now;
 
   int get _nowUtcMs => now().toUtc().millisecondsSinceEpoch;
+
+  Future<void> _markWorkoutDirty(DatabaseExecutor txn, String workoutId) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final w = await txn.query('workouts', columns: ['client_version'], where: 'id = ?', whereArgs: [workoutId]);
+    final nextVer = w.isNotEmpty ? (((w.first['client_version'] as int?) ?? 1) + 1) : 1;
+    await txn.update(
+      'workouts',
+      {
+        'local_updated_at': nowMs,
+        'sync_status': 'pending',
+        'client_version': nextVer,
+        'sync_error': null,
+      },
+      where: 'id = ?',
+      whereArgs: [workoutId],
+    );
+    await txn.insert(
+      'sync_queue',
+      {
+        'id': _uuid.v4(),
+        'workout_id': workoutId,
+        'operation': 'upsert',
+        'client_version': nextVer,
+        'created_at_utc': nowMs,
+        'attempts': 0,
+        'last_error': null,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<String?> _workoutIdForExercise(DatabaseExecutor txn, String weId) async {
+    final r = await txn.query('workout_exercises', columns: ['workout_id'], where: 'id = ?', whereArgs: [weId]);
+    return r.isEmpty ? null : r.first['workout_id'] as String;
+  }
+
+  Future<String?> _workoutIdForSet(DatabaseExecutor txn, String setId) async {
+    final r = await txn.rawQuery('''
+      SELECT e.workout_id FROM set_entries s
+      JOIN workout_exercises e ON s.exercise_id = e.id
+      WHERE s.id = ?''', [setId]);
+    return r.isEmpty ? null : r.first['workout_id'] as String;
+  }
 
   // ---------- exercises catalogue ----------
   Future<String> findOrCreateExercise(
@@ -100,14 +144,34 @@ class WorkoutRepo {
     }
     final id = _uuid.v4();
     final n = now();
-    await db.insert('workouts', {
-      'id': id,
-      'date': dateKey(start ? n : date),
-      'title': title.trim(),
-      'status': start ? 'active' : 'finished',
-      'started_at_utc': start ? _nowUtcMs : null,
-      'finished_at_utc': start ? null : null,
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    await db.transaction((txn) async {
+      await txn.insert('workouts', {
+        'id': id,
+        'date': dateKey(start ? n : date),
+        'title': title.trim(),
+        'status': start ? 'active' : 'finished',
+        'started_at_utc': start ? _nowUtcMs : null,
+        'finished_at_utc': start ? null : null,
+        'local_updated_at': nowMs,
+        'sync_status': 'pending',
+        'client_version': 1,
+      });
+      await txn.insert(
+        'sync_queue',
+        {
+          'id': _uuid.v4(),
+          'workout_id': id,
+          'operation': 'upsert',
+          'client_version': 1,
+          'created_at_utc': nowMs,
+          'attempts': 0,
+          'last_error': null,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     });
+    AppDataEvents.instance.notifyWorkoutChanged();
     return id;
   }
 
@@ -117,28 +181,44 @@ class WorkoutRepo {
     if (a != null && a['id'] != id) {
       throw ActiveWorkoutExists(a['id'] as String);
     }
-    await db.update(
-      'workouts',
-      {'status': 'active', 'date': dateKey(now()), 'started_at_utc': _nowUtcMs},
-      where: "id = ? AND status = 'planned'",
-      whereArgs: [id],
-    );
+    await db.transaction((t) async {
+      await t.update(
+        'workouts',
+        {'status': 'active', 'date': dateKey(now()), 'started_at_utc': _nowUtcMs},
+        where: "id = ? AND status = 'planned'",
+        whereArgs: [id],
+      );
+      await _markWorkoutDirty(t, id);
+    });
+    AppDataEvents.instance.notifyWorkoutChanged();
   }
 
-  Future<void> renameWorkout(String id, String title) => db.update(
-    'workouts',
-    {'title': title.trim()},
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+  Future<void> renameWorkout(String id, String title) async {
+    await db.transaction((t) async {
+      await t.update(
+        'workouts',
+        {'title': title.trim()},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      await _markWorkoutDirty(t, id);
+    });
+    AppDataEvents.instance.notifyWorkoutChanged();
+  }
 
   /// Only for non-active workouts (active date is fixed at start).
-  Future<void> changeWorkoutDate(String id, DateTime date) => db.update(
-    'workouts',
-    {'date': dateKey(date)},
-    where: "id = ? AND status <> 'active'",
-    whereArgs: [id],
-  );
+  Future<void> changeWorkoutDate(String id, DateTime date) async {
+    await db.transaction((t) async {
+      await t.update(
+        'workouts',
+        {'date': dateKey(date)},
+        where: "id = ? AND status <> 'active'",
+        whereArgs: [id],
+      );
+      await _markWorkoutDirty(t, id);
+    });
+    AppDataEvents.instance.notifyWorkoutChanged();
+  }
 
   Future<List<Rec>> listWorkouts() => db.rawQuery('''
     SELECT w.*,
@@ -170,32 +250,74 @@ class WorkoutRepo {
     final started = w['started_at_utc'] as int?;
     final end = _nowUtcMs;
     final minutes = started == null ? null : ((end - started) / 60000).round();
-    final n = await db.update(
-      'workouts',
-      {
-        'status': 'finished',
-        'finished_at_utc': end,
-        if (minutes != null) 'duration_minutes': minutes,
-      },
-      where: "id = ? AND status = 'active'",
-      whereArgs: [id],
-    );
-    return n == 1;
+    bool updated = false;
+    await db.transaction((t) async {
+      final n = await t.update(
+        'workouts',
+        {
+          'status': 'finished',
+          'finished_at_utc': end,
+          if (minutes != null) 'duration_minutes': minutes,
+        },
+        where: "id = ? AND status = 'active'",
+        whereArgs: [id],
+      );
+      if (n == 1) {
+        updated = true;
+        await _markWorkoutDirty(t, id);
+      }
+    });
+    if (updated) {
+      AppDataEvents.instance.notifyWorkoutChanged();
+    }
+    return updated;
   }
 
-  Future<void> deleteWorkout(String id) => db.transaction((t) async {
-    await t.rawDelete(
-      '''DELETE FROM set_entries WHERE exercise_id IN
-            (SELECT id FROM workout_exercises WHERE workout_id = ?)''',
-      [id],
-    );
-    await t.delete(
-      'workout_exercises',
-      where: 'workout_id = ?',
-      whereArgs: [id],
-    );
-    await t.delete('workouts', where: 'id = ?', whereArgs: [id]);
-  });
+  Future<void> deleteWorkout(String id) async {
+    await db.transaction((t) async {
+      final wRows = await t.query('workouts', where: 'id = ?', whereArgs: [id]);
+      final serverId = wRows.isNotEmpty ? wRows.first['server_id'] as String? : null;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+      await t.insert(
+        'sync_tombstones',
+        {
+          'id': id,
+          'server_id': serverId ?? id,
+          'deleted_at_utc': nowMs,
+          'sync_status': 'pending',
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      await t.insert(
+        'sync_queue',
+        {
+          'id': _uuid.v4(),
+          'workout_id': id,
+          'operation': 'delete',
+          'client_version': wRows.isNotEmpty ? ((wRows.first['client_version'] as int?) ?? 1) : 1,
+          'created_at_utc': nowMs,
+          'attempts': 0,
+          'last_error': null,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      await t.rawDelete(
+        '''DELETE FROM set_entries WHERE exercise_id IN
+              (SELECT id FROM workout_exercises WHERE workout_id = ?)''',
+        [id],
+      );
+      await t.delete(
+        'workout_exercises',
+        where: 'workout_id = ?',
+        whereArgs: [id],
+      );
+      await t.delete('workouts', where: 'id = ?', whereArgs: [id]);
+    });
+    AppDataEvents.instance.notifyWorkoutChanged();
+  }
 
   /// New workout (status planned) copying exercises and plan; no sets and no
   /// completion flags are copied.
@@ -204,12 +326,29 @@ class WorkoutRepo {
         final src =
             (await t.query('workouts', where: 'id = ?', whereArgs: [id])).first;
         final nid = _uuid.v4();
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
         await t.insert('workouts', {
           'id': nid,
           'date': dateKey(date),
           'title': src['title'],
           'status': 'planned',
+          'local_updated_at': nowMs,
+          'sync_status': 'pending',
+          'client_version': 1,
         });
+        await t.insert(
+          'sync_queue',
+          {
+            'id': _uuid.v4(),
+            'workout_id': nid,
+            'operation': 'upsert',
+            'client_version': 1,
+            'created_at_utc': nowMs,
+            'attempts': 0,
+            'last_error': null,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
         final exs = await t.query(
           'workout_exercises',
           where: 'workout_id = ?',
@@ -224,6 +363,7 @@ class WorkoutRepo {
             'note': null,
           });
         }
+        AppDataEvents.instance.notifyWorkoutChanged();
         return nid;
       });
 
@@ -254,6 +394,8 @@ class WorkoutRepo {
           'exercise_ref_id': ref,
           'sort_order': c + 1,
         });
+        await _markWorkoutDirty(t, workoutId);
+        AppDataEvents.instance.notifyWorkoutChanged();
         return id;
       });
 
@@ -269,6 +411,8 @@ class WorkoutRepo {
     await t.delete('set_entries', where: 'exercise_id = ?', whereArgs: [weId]);
     await t.delete('workout_exercises', where: 'id = ?', whereArgs: [weId]);
     await _renumber(t, wid);
+    await _markWorkoutDirty(t, wid);
+    AppDataEvents.instance.notifyWorkoutChanged();
   });
 
   Future<void> _renumber(DatabaseExecutor t, String wid) async {
@@ -320,6 +464,8 @@ class WorkoutRepo {
           where: 'id = ?',
           whereArgs: [rows[j]['id']],
         );
+        await _markWorkoutDirty(t, wid);
+        AppDataEvents.instance.notifyWorkoutChanged();
       });
 
   Future<void> updatePlan(
@@ -330,19 +476,26 @@ class WorkoutRepo {
     int? rir,
     int? restSec,
     String? note,
-  }) => db.update(
-    'workout_exercises',
-    {
-      'plan_sets': sets,
-      'plan_rep_min': repMin,
-      'plan_rep_max': repMax,
-      'plan_rir': rir,
-      'plan_rest_sec': restSec,
-      'note': note,
-    },
-    where: 'id = ?',
-    whereArgs: [weId],
-  );
+  }) async {
+    await db.transaction((t) async {
+      final wid = await _workoutIdForExercise(t, weId);
+      await t.update(
+        'workout_exercises',
+        {
+          'plan_sets': sets,
+          'plan_rep_min': repMin,
+          'plan_rep_max': repMax,
+          'plan_rir': rir,
+          'plan_rest_sec': restSec,
+          'note': note,
+        },
+        where: 'id = ?',
+        whereArgs: [weId],
+      );
+      if (wid != null) await _markWorkoutDirty(t, wid);
+    });
+    AppDataEvents.instance.notifyWorkoutChanged();
+  }
 
   // ---------- sets ----------
   Future<List<Rec>> sets(String weId) => db.query(
@@ -356,6 +509,7 @@ class WorkoutRepo {
   Future<String> addSet(String weId, {bool warmup = false}) => db.transaction((
     t,
   ) async {
+    final wid = await _workoutIdForExercise(t, weId);
     final prev = await t.query(
       'set_entries',
       where: 'exercise_id = ?',
@@ -374,6 +528,8 @@ class WorkoutRepo {
       'set_type': warmup ? 'warmup' : 'work',
       'completed': 0,
     });
+    if (wid != null) await _markWorkoutDirty(t, wid);
+    AppDataEvents.instance.notifyWorkoutChanged();
     return id;
   });
 
@@ -384,37 +540,52 @@ class WorkoutRepo {
     Object? rir = kUnset,
     Object? note = kUnset,
     String? type,
-  }) => db.update(
-    'set_entries',
-    {
-      if (weight != null) 'weight_kg': weight,
-      if (reps != null) 'reps': reps,
-      if (rir != kUnset) 'rir': rir,
-      if (note != kUnset) 'note': note,
-      if (type != null) 'set_type': type,
-    },
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+  }) async {
+    await db.transaction((t) async {
+      final wid = await _workoutIdForSet(t, id);
+      await t.update(
+        'set_entries',
+        {
+          if (weight != null) 'weight_kg': weight,
+          if (reps != null) 'reps': reps,
+          if (rir != kUnset) 'rir': rir,
+          if (note != kUnset) 'note': note,
+          if (type != null) 'set_type': type,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (wid != null) await _markWorkoutDirty(t, wid);
+    });
+    AppDataEvents.instance.notifyWorkoutChanged();
+  }
 
   /// Returns true only if this call newly marked the set as completed.
   Future<bool> setCompleted(String id, bool value) async {
-    final r = await db.query('set_entries', where: 'id = ?', whereArgs: [id]);
-    if (r.isEmpty) return false;
-    final was = r.first['completed'] == 1;
-    await db.update(
-      'set_entries',
-      {
-        'completed': value ? 1 : 0,
-        'completed_at_utc': value ? _nowUtcMs : null,
-      },
-      where: 'id = ?',
-      whereArgs: [id],
-    );
-    return value && !was;
+    bool newlyCompleted = false;
+    await db.transaction((t) async {
+      final r = await t.query('set_entries', where: 'id = ?', whereArgs: [id]);
+      if (r.isEmpty) return;
+      final was = r.first['completed'] == 1;
+      newlyCompleted = value && !was;
+      final wid = await _workoutIdForSet(t, id);
+      await t.update(
+        'set_entries',
+        {
+          'completed': value ? 1 : 0,
+          'completed_at_utc': value ? _nowUtcMs : null,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+      if (wid != null) await _markWorkoutDirty(t, wid);
+    });
+    AppDataEvents.instance.notifyWorkoutChanged();
+    return newlyCompleted;
   }
 
   Future<void> deleteSet(String id) => db.transaction((t) async {
+    final wid = await _workoutIdForSet(t, id);
     final r = await t.query('set_entries', where: 'id = ?', whereArgs: [id]);
     if (r.isEmpty) return;
     final we = r.first['exercise_id'] as String;
@@ -434,6 +605,8 @@ class WorkoutRepo {
         whereArgs: [rows[i]['id']],
       );
     }
+    if (wid != null) await _markWorkoutDirty(t, wid);
+    AppDataEvents.instance.notifyWorkoutChanged();
   });
 
   // ---------- history ----------

@@ -48,7 +48,8 @@ class AuthService extends ChangeNotifier {
   late ApiClient _apiClient;
   AppDb? _appDb;
 
-  AppDb get _db => _appDb ?? AppDb.instance;
+  AppDb get db => _appDb ?? AppDb.instance;
+  AppDb get _db => db;
   ApiClient get apiClient => _apiClient;
   TokenStorage get tokenStorage => _tokenStorage;
 

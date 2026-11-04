@@ -6,9 +6,11 @@ import 'auth/auth_service.dart';
 import 'auth/cloud_workout_sync.dart';
 import 'auth/login_screen.dart';
 import 'auth/profile_screen.dart';
+import 'data_events.dart';
 import 'db.dart';
 import 'repo.dart';
 import 'rest_timer.dart';
+import 'sync_status_badge.dart';
 import 'theme.dart';
 import 'validators.dart';
 import 'week_utils.dart';
@@ -65,24 +67,48 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
   List<Rec> _list = [];
   bool _loading = true;
   Object? _error;
+  StreamSubscription? _eventsSub;
+  void Function()? _dbListener;
 
   @override
   void initState() {
     super.initState();
-    AppDb.instance.onDatabaseSwitched = () {
-      if (mounted) _load();
+    _dbListener = () {
+      if (mounted) _load(fromNetwork: true);
     };
-    _load();
+    AppDb.instance.addDatabaseSwitchListener(_dbListener!);
+    _eventsSub = AppDataEvents.instance.stream.listen((event) {
+      if (event == AppDataCategory.workout && mounted) {
+        _load(fromNetwork: false);
+      }
+    });
+    _load(fromNetwork: true);
   }
 
-  Future<void> _load() async {
+  @override
+  void dispose() {
+    if (_dbListener != null) {
+      AppDb.instance.removeDatabaseSwitchListener(_dbListener!);
+    }
+    _eventsSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load({bool fromNetwork = false}) async {
+    final accountUserId = AppDb.instance.currentUserId;
+    final accountEpoch = AppDb.instance.accountEpoch;
+
     try {
-      if (AuthService.instance.isAuthenticated) {
+      if (fromNetwork && AuthService.instance.isAuthenticated) {
         try {
           await CloudWorkoutSync().syncFromServer(AppDb.instance.db);
         } catch (_) {}
       }
+      if (!AppDb.instance.isCurrentAccount(accountUserId, accountEpoch)) return;
+      if (!mounted) return;
+
       final l = await _repo.listWorkouts();
+      if (!AppDb.instance.isCurrentAccount(accountUserId, accountEpoch)) return;
       if (mounted) {
         setState(() {
           _list = l;
@@ -91,6 +117,7 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
         });
       }
     } catch (e) {
+      if (!AppDb.instance.isCurrentAccount(accountUserId, accountEpoch)) return;
       if (mounted) {
         setState(() {
           _error = e;
@@ -291,6 +318,12 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
+                                        SyncStatusBadge(
+                                          workoutId: w['id'] as String,
+                                          syncStatus: w['sync_status'] as String? ?? 'synced',
+                                          syncError: w['sync_error'] as String?,
+                                          onRetryFinished: () => _load(fromNetwork: false),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -316,9 +349,21 @@ class _WorkoutsScreenState extends State<WorkoutsScreen> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            subtitle: Text(
-                              '${w['date']} • ${_statusLabel(w['status'] as String)} • '
-                              'упр.: ${w['ex_count']} • подходов: ${w['done_sets']}',
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '${w['date']} • ${_statusLabel(w['status'] as String)} • '
+                                  'упр.: ${w['ex_count']} • подходов: ${w['done_sets']}',
+                                ),
+                                SyncStatusBadge(
+                                  workoutId: w['id'] as String,
+                                  syncStatus: w['sync_status'] as String? ?? 'synced',
+                                  syncError: w['sync_error'] as String?,
+                                  onRetryFinished: () => _load(fromNetwork: false),
+                                ),
+                              ],
                             ),
                             trailing: const Icon(Icons.chevron_right),
                             onTap: () => _open(w['id'] as String),
@@ -380,6 +425,7 @@ class _NewWorkoutDialogState extends State<_NewWorkoutDialog> {
   final _title = TextEditingController(text: 'Тренировка');
   late DateTime _date = dateOnly(widget.initialDate);
   String? _dateError;
+  bool _submitting = false;
 
   @override
   Widget build(BuildContext context) {
@@ -429,11 +475,11 @@ class _NewWorkoutDialogState extends State<_NewWorkoutDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
+          onPressed: _submitting ? null : () => Navigator.pop(context),
           child: const Text('Отмена'),
         ),
         OutlinedButton(
-          onPressed: () {
+          onPressed: _submitting ? null : () {
             if (!_form.currentState!.validate()) return;
             if (_date.isAfter(dateOnly(DateTime.now()))) {
               setState(
@@ -443,13 +489,15 @@ class _NewWorkoutDialogState extends State<_NewWorkoutDialog> {
               );
               return;
             }
+            setState(() => _submitting = true);
             Navigator.pop(context, _NewWorkout(_title.text, _date, false));
           },
           child: const Text('Записать завершённой'),
         ),
         FilledButton(
-          onPressed: () {
+          onPressed: _submitting ? null : () {
             if (!_form.currentState!.validate()) return;
+            setState(() => _submitting = true);
             Navigator.pop(
               context,
               _NewWorkout(_title.text, DateTime.now(), true),

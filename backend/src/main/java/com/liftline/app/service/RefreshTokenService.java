@@ -100,7 +100,7 @@ public class RefreshTokenService {
 
     public TokenPair rotateSession(String rawRefreshToken, String userAgent, String clientIp) {
         String tokenHash = hashToken(rawRefreshToken);
-        RefreshSession session = refreshSessionRepository.findByTokenHash(tokenHash)
+        RefreshSession session = refreshSessionRepository.findByTokenHashForUpdate(tokenHash)
                 .orElseThrow(() -> new BadCredentialsException("Invalid refresh token"));
 
         if (session.getExpiresAt().isBefore(Instant.now())) {
