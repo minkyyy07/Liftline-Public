@@ -149,6 +149,33 @@ cd backend
 mvn clean test
 ```
 
+### MySQL concurrency regressions
+
+Use a **dedicated, disposable MySQL database**: these tests create fixtures and delete
+workouts, sessions and users during cleanup. H2 is not supported by this suite.
+The three workout tables must use InnoDB; `innodb_deadlock_detect` must be enabled
+and `innodb_rollback_on_timeout` must be OFF (the MySQL defaults).
+
+```bash
+MYSQL_TEST_URL='jdbc:mysql://127.0.0.1:3306/liftline_lock_it?serverTimezone=UTC' \
+MYSQL_TEST_USERNAME='<test-user>' MYSQL_TEST_PASSWORD='<test-password>' \
+mvn -f backend/pom.xml -Pmysql-it clean verify
+```
+
+The profile runs the regular backend tests, packages the application, and runs
+`WorkoutMySqlIT` through Failsafe. Missing/unreachable MySQL fails the run; it is
+not skipped. The suite overlaps opposite-order UUID inserts and verifies rollback
+and replay for POST/PUT, exercise/set UUIDs, and both explicit and commit-time flush.
+
+Deadlocks and lock-wait timeouts return HTTP **503**, `Retry-After: 1`, and
+`{"error":"Temporary database lock conflict; retry the entire request","code":"DATABASE_LOCK_RETRY","retryable":true}`.
+Retry the entire request in a new transaction after backoff, retaining its UUIDs
+and revision; no automatic server-side retry is performed. A retry can still
+return the existing **409** ownership/revision conflict if another request won.
+The current Flutter client retains 503 failures in its sync queue for a later sync
+pass/manual retry; unlike 409, they do not create a conflict draft or remove the
+queued upload. The client does not currently honor `Retry-After`.
+
 ### Test Suite Coverage (34 automated tests):
 1. **`AuthAndIsolationTests` (13 MockMvc tests)**:
    - Valid registration and BCrypt password hash verification (`POST /api/auth/register`).
