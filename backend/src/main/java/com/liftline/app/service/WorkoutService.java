@@ -14,6 +14,10 @@ import com.liftline.app.repository.SetEntryRepository;
 import com.liftline.app.repository.UserRepository;
 import com.liftline.app.repository.WorkoutExerciseRepository;
 import com.liftline.app.repository.WorkoutRepository;
+import jakarta.persistence.EntityExistsException;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
@@ -29,9 +33,11 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -44,6 +50,9 @@ public class WorkoutService {
     private final WorkoutExerciseRepository workoutExerciseRepository;
     private final SetEntryRepository setEntryRepository;
     private final UserRepository userRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public WorkoutService(WorkoutRepository workoutRepository,
                           WorkoutExerciseRepository workoutExerciseRepository,
@@ -122,6 +131,7 @@ public class WorkoutService {
         if (request.getId() != null) {
             Optional<Workout> existing = workoutRepository.findByIdAndUserId(request.getId(), user.getId());
             if (existing.isPresent()) {
+                validateNestedIds(request.getExercises(), indexExercises(existing.get()));
                 // Idempotent: return already created workout
                 return existing.get();
             }
@@ -130,6 +140,7 @@ public class WorkoutService {
                 throw new AccessDeniedException("Workout not found or access denied");
             }
         }
+        validateNestedIds(request.getExercises(), Map.of());
         Workout workout = new Workout();
         workout.setUser(user);
         if (request.getId() != null) {
@@ -144,7 +155,7 @@ public class WorkoutService {
         workout.setStartedAt(request.getStartedAtUtc());
         workout.setFinishedAt(request.getFinishedAtUtc());
         workout.getExercises().addAll(buildExercises(workout, request.getExercises(), Map.of()));
-        return workoutRepository.save(workout);
+        return persistAndFlush(workout);
     }
 
     public Workout updateWorkoutFromRequest(UUID workoutId, UpdateWorkoutRequest request) {
@@ -161,6 +172,10 @@ public class WorkoutService {
             if (existing.getUpdatedAt().isAfter(request.getClientUpdatedAt())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Workout conflict: newer version exists on server");
             }
+        }
+
+        if (request.isPresent("exercises")) {
+            validateNestedIds(request.getExercises(), indexExercises(existing));
         }
 
         existing.setTitle(request.getTitle().trim());
@@ -192,7 +207,59 @@ public class WorkoutService {
         }
         // Flush so @Version is bumped before the response is built: the client sends the
         // revision it receives back on its next upload, and a stale one would be a false 409.
-        return workoutRepository.saveAndFlush(existing);
+        // Child-only changes must also participate in the workout's optimistic lock.
+        existing.setUpdatedAt(Instant.now());
+        return persistAndFlush(existing);
+    }
+
+    private Workout persistAndFlush(Workout workout) {
+        try {
+            // Never merge client-assigned IDs: a concurrent insert must fail at the PK,
+            // not turn a new child into an update of the row that won the race.
+            entityManager.persist(workout);
+            workoutRepository.flush();
+            return workout;
+        } catch (EntityExistsException | DataIntegrityViolationException ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Workout conflict: ID already in use", ex);
+        }
+    }
+
+    private void validateNestedIds(List<WorkoutExerciseDto> exercises, Map<UUID, WorkoutExercise> previous) {
+        if (exercises == null) {
+            return;
+        }
+        Set<UUID> seen = new HashSet<>();
+        for (WorkoutExerciseDto exercise : exercises) {
+            if (exercise == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid nested workout entry");
+            }
+            UUID exerciseId = exercise.getId();
+            checkUniqueNestedId(exerciseId, seen);
+            WorkoutExercise stored = exerciseId == null ? null : previous.get(exerciseId);
+            if (exerciseId != null && stored == null && workoutExerciseRepository.existsById(exerciseId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Workout conflict: ID already in use");
+            }
+            Map<UUID, SetEntry> previousSets = stored == null ? Map.of() : indexSets(stored);
+            if (exercise.getSets() == null) {
+                continue;
+            }
+            for (SetEntryDto set : exercise.getSets()) {
+                if (set == null) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid nested workout entry");
+                }
+                UUID setId = set.getId();
+                checkUniqueNestedId(setId, seen);
+                if (setId != null && !previousSets.containsKey(setId) && setEntryRepository.existsById(setId)) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Workout conflict: ID already in use");
+                }
+            }
+        }
+    }
+
+    private static void checkUniqueNestedId(UUID id, Set<UUID> seen) {
+        if (id != null && !seen.add(id)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Duplicate nested workout ID");
+        }
     }
 
     /**
