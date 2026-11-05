@@ -30,6 +30,16 @@ public class Workout {
     @Column(name = "notes", length = 1000)
     private String notes;
 
+    /** Lifecycle state: planned | active | finished (mirrors the client model). */
+    @Column(name = "status", nullable = false, length = 16)
+    private String status = "finished";
+
+    @Column(name = "started_at")
+    private Instant startedAt;
+
+    @Column(name = "finished_at")
+    private Instant finishedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -41,6 +51,7 @@ public class Workout {
     private Long version = 0L;
 
     @OneToMany(mappedBy = "workout", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sortOrder ASC")
     private List<WorkoutExercise> exercises = new ArrayList<>();
 
     @PrePersist
@@ -71,6 +82,12 @@ public class Workout {
     public void setDurationMinutes(Integer durationMinutes) { this.durationMinutes = durationMinutes; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public Instant getStartedAt() { return startedAt; }
+    public void setStartedAt(Instant startedAt) { this.startedAt = startedAt; }
+    public Instant getFinishedAt() { return finishedAt; }
+    public void setFinishedAt(Instant finishedAt) { this.finishedAt = finishedAt; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }

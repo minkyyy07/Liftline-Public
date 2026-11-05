@@ -1,6 +1,7 @@
 package com.liftline.app.service;
 
 import com.liftline.app.dto.CreateWorkoutRequest;
+import com.liftline.app.dto.PartialDto;
 import com.liftline.app.dto.SetEntryDto;
 import com.liftline.app.dto.UpdateWorkoutRequest;
 import com.liftline.app.dto.WorkoutDto;
@@ -25,7 +26,11 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -33,6 +38,8 @@ import java.util.stream.Collectors;
 @Service
 @Transactional
 public class WorkoutService {
+    static final String DEFAULT_STATUS = "finished";
+
     private final WorkoutRepository workoutRepository;
     private final WorkoutExerciseRepository workoutExerciseRepository;
     private final SetEntryRepository setEntryRepository;
@@ -71,13 +78,13 @@ public class WorkoutService {
     @Transactional(readOnly = true)
     public Page<Workout> getCurrentUserWorkouts(Pageable pageable) {
         User user = getAuthenticatedUser();
-        return workoutRepository.findByUserIdOrderByWorkoutDateDesc(user.getId(), pageable);
+        return workoutRepository.findByUserIdOrderByWorkoutDateDescIdAsc(user.getId(), pageable);
     }
 
     @Transactional(readOnly = true)
     public List<WorkoutDto> getCurrentUserWorkoutsDto(Pageable pageable) {
         User user = getAuthenticatedUser();
-        Page<Workout> page = workoutRepository.findByUserIdOrderByWorkoutDateDesc(user.getId(), pageable);
+        Page<Workout> page = workoutRepository.findByUserIdOrderByWorkoutDateDescIdAsc(user.getId(), pageable);
         return page.getContent().stream().map(this::toDto).collect(Collectors.toList());
     }
 
@@ -118,6 +125,10 @@ public class WorkoutService {
                 // Idempotent: return already created workout
                 return existing.get();
             }
+            if (workoutRepository.existsById(request.getId())) {
+                // Client UUID already belongs to another account: never take it over
+                throw new AccessDeniedException("Workout not found or access denied");
+            }
         }
         Workout workout = new Workout();
         workout.setUser(user);
@@ -128,42 +139,11 @@ public class WorkoutService {
         workout.setTitle(request.getTitle().trim());
         workout.setDurationMinutes(request.getDurationMinutes());
         workout.setNotes(request.getNotes());
-
-        if (request.getExercises() != null) {
-            for (WorkoutExerciseDto weDto : request.getExercises()) {
-                WorkoutExercise exercise = new WorkoutExercise();
-                if (weDto.getId() != null) {
-                    exercise.setId(weDto.getId());
-                }
-                exercise.setWorkout(workout);
-                exercise.setExerciseName(weDto.getExerciseName().trim());
-                exercise.setSortOrder(weDto.getSortOrder() != null ? weDto.getSortOrder() : 0);
-                exercise.setCreatedAt(Instant.now());
-                exercise.setUpdatedAt(Instant.now());
-
-                if (weDto.getSets() != null) {
-                    for (SetEntryDto seDto : weDto.getSets()) {
-                        SetEntry setEntry = new SetEntry();
-                        if (seDto.getId() != null) {
-                            setEntry.setId(seDto.getId());
-                        }
-                        setEntry.setExercise(exercise);
-                        setEntry.setSetNumber(seDto.getSetNumber());
-                        setEntry.setWeightKg(seDto.getWeightKg());
-                        setEntry.setReps(seDto.getReps());
-                        setEntry.setCompleted(seDto.getCompleted() != null ? seDto.getCompleted() : true);
-                        setEntry.setRpe(seDto.getRpe());
-                        setEntry.setSetType(seDto.getSetType());
-                        setEntry.setRestSeconds(seDto.getRestSeconds());
-                        setEntry.setNotes(seDto.getNotes());
-                        setEntry.setCreatedAt(Instant.now());
-                        setEntry.setUpdatedAt(Instant.now());
-                        exercise.getSets().add(setEntry);
-                    }
-                }
-                workout.getExercises().add(exercise);
-            }
-        }
+        // Requests without a status come from legacy clients: historical workouts are finished.
+        workout.setStatus(request.getStatus() != null ? request.getStatus() : DEFAULT_STATUS);
+        workout.setStartedAt(request.getStartedAtUtc());
+        workout.setFinishedAt(request.getFinishedAtUtc());
+        workout.getExercises().addAll(buildExercises(workout, request.getExercises(), Map.of()));
         return workoutRepository.save(workout);
     }
 
@@ -185,46 +165,130 @@ public class WorkoutService {
 
         existing.setTitle(request.getTitle().trim());
         existing.setWorkoutDate(request.getWorkoutDate());
-        existing.setDurationMinutes(request.getDurationMinutes());
-        existing.setNotes(request.getNotes());
+        // Fields missing from the payload keep their stored value; an explicit null clears optional ones.
+        if (request.isPresent("durationMinutes")) {
+            existing.setDurationMinutes(request.getDurationMinutes());
+        }
+        if (request.isPresent("notes")) {
+            existing.setNotes(request.getNotes());
+        }
+        // status is NOT NULL: a null value is treated as "not provided".
+        if (request.isPresent("status") && request.getStatus() != null) {
+            existing.setStatus(request.getStatus());
+        }
+        if (request.isPresent("startedAtUtc")) {
+            existing.setStartedAt(request.getStartedAtUtc());
+        }
+        if (request.isPresent("finishedAtUtc")) {
+            existing.setFinishedAt(request.getFinishedAtUtc());
+        }
 
-        existing.getExercises().clear();
-        if (request.getExercises() != null) {
-            for (WorkoutExerciseDto weDto : request.getExercises()) {
-                WorkoutExercise exercise = new WorkoutExercise();
-                if (weDto.getId() != null) {
-                    exercise.setId(weDto.getId());
+        if (request.isPresent("exercises")) {
+            // Upsert by id: rows that are still in the payload are updated in place,
+            // rows missing from it are removed (orphanRemoval). Nothing is recreated.
+            List<WorkoutExercise> next = buildExercises(existing, request.getExercises(), indexExercises(existing));
+            existing.getExercises().clear();
+            existing.getExercises().addAll(next);
+        }
+        // Flush so @Version is bumped before the response is built: the client sends the
+        // revision it receives back on its next upload, and a stale one would be a false 409.
+        return workoutRepository.saveAndFlush(existing);
+    }
+
+    /**
+     * Builds exercises from DTOs. A DTO whose id matches an entity in {@code previous} updates
+     * that entity in place: fields absent from the payload keep their stored value.
+     */
+    private List<WorkoutExercise> buildExercises(Workout owner, List<WorkoutExerciseDto> dtos,
+                                                 Map<UUID, WorkoutExercise> previous) {
+        List<WorkoutExercise> result = new ArrayList<>();
+        if (dtos == null) {
+            return result;
+        }
+        for (WorkoutExerciseDto dto : dtos) {
+            WorkoutExercise prev = dto.getId() == null ? null : previous.get(dto.getId());
+            boolean hasPrev = prev != null;
+            WorkoutExercise exercise = hasPrev ? prev : new WorkoutExercise();
+            if (!hasPrev) {
+                if (dto.getId() != null) {
+                    exercise.setId(dto.getId());
                 }
-                exercise.setWorkout(existing);
-                exercise.setExerciseName(weDto.getExerciseName().trim());
-                exercise.setSortOrder(weDto.getSortOrder() != null ? weDto.getSortOrder() : 0);
                 exercise.setCreatedAt(Instant.now());
                 exercise.setUpdatedAt(Instant.now());
-
-                if (weDto.getSets() != null) {
-                    for (SetEntryDto seDto : weDto.getSets()) {
-                        SetEntry setEntry = new SetEntry();
-                        if (seDto.getId() != null) {
-                            setEntry.setId(seDto.getId());
-                        }
-                        setEntry.setExercise(exercise);
-                        setEntry.setSetNumber(seDto.getSetNumber());
-                        setEntry.setWeightKg(seDto.getWeightKg());
-                        setEntry.setReps(seDto.getReps());
-                        setEntry.setCompleted(seDto.getCompleted() != null ? seDto.getCompleted() : true);
-                        setEntry.setRpe(seDto.getRpe());
-                        setEntry.setSetType(seDto.getSetType());
-                        setEntry.setRestSeconds(seDto.getRestSeconds());
-                        setEntry.setNotes(seDto.getNotes());
-                        setEntry.setCreatedAt(Instant.now());
-                        setEntry.setUpdatedAt(Instant.now());
-                        exercise.getSets().add(setEntry);
-                    }
-                }
-                existing.getExercises().add(exercise);
             }
+            exercise.setWorkout(owner);
+            exercise.setExerciseName(dto.getExerciseName().trim());
+            exercise.setSortOrder(dto.getSortOrder() != null ? dto.getSortOrder() : 0);
+            exercise.setExerciseRefId(pick(hasPrev, dto, "exerciseRefId", dto.getExerciseRefId(), exercise.getExerciseRefId()));
+            exercise.setNotes(pick(hasPrev, dto, "notes", dto.getNotes(), exercise.getNotes()));
+            exercise.setPlanSets(pick(hasPrev, dto, "planSets", dto.getPlanSets(), exercise.getPlanSets()));
+            exercise.setPlanRepMin(pick(hasPrev, dto, "planRepMin", dto.getPlanRepMin(), exercise.getPlanRepMin()));
+            exercise.setPlanRepMax(pick(hasPrev, dto, "planRepMax", dto.getPlanRepMax(), exercise.getPlanRepMax()));
+            exercise.setPlanRir(pick(hasPrev, dto, "planRir", dto.getPlanRir(), exercise.getPlanRir()));
+            exercise.setPlanRestSec(pick(hasPrev, dto, "planRestSec", dto.getPlanRestSec(), exercise.getPlanRestSec()));
+
+            if (!hasPrev || dto.isPresent("sets")) {
+                List<SetEntry> nextSets = buildSets(exercise, dto.getSets(), indexSets(exercise));
+                exercise.getSets().clear();
+                exercise.getSets().addAll(nextSets);
+            }
+            result.add(exercise);
         }
-        return workoutRepository.save(existing);
+        return result;
+    }
+
+    private List<SetEntry> buildSets(WorkoutExercise owner, List<SetEntryDto> dtos, Map<UUID, SetEntry> previous) {
+        List<SetEntry> result = new ArrayList<>();
+        if (dtos == null) {
+            return result;
+        }
+        for (SetEntryDto dto : dtos) {
+            SetEntry prev = dto.getId() == null ? null : previous.get(dto.getId());
+            boolean hasPrev = prev != null;
+            SetEntry set = hasPrev ? prev : new SetEntry();
+            if (!hasPrev) {
+                if (dto.getId() != null) {
+                    set.setId(dto.getId());
+                }
+                set.setCreatedAt(Instant.now());
+                set.setUpdatedAt(Instant.now());
+            }
+            set.setExercise(owner);
+            set.setSetNumber(dto.getSetNumber());
+            set.setWeightKg(pick(hasPrev, dto, "weightKg", dto.getWeightKg(), set.getWeightKg()));
+            set.setReps(pick(hasPrev, dto, "reps", dto.getReps(), set.getReps()));
+            Boolean completedIncoming = dto.getCompleted() != null ? dto.getCompleted() : Boolean.TRUE;
+            set.setCompleted(pick(hasPrev, dto, "completed", completedIncoming, set.getCompleted()));
+            set.setRpe(pick(hasPrev, dto, "rpe", dto.getRpe(), set.getRpe()));
+            set.setSetType(pick(hasPrev, dto, "setType", dto.getSetType(), set.getSetType()));
+            set.setRestSeconds(pick(hasPrev, dto, "restSeconds", dto.getRestSeconds(), set.getRestSeconds()));
+            set.setNotes(pick(hasPrev, dto, "notes", dto.getNotes(), set.getNotes()));
+            set.setRir(pick(hasPrev, dto, "rir", dto.getRir(), set.getRir()));
+            set.setCompletedAt(pick(hasPrev, dto, "completedAtUtc", dto.getCompletedAtUtc(), set.getCompletedAt()));
+            result.add(set);
+        }
+        return result;
+    }
+
+    /** Returns the incoming value when there is no stored entity, or when the field was sent. */
+    private static <T> T pick(boolean hasPrevious, PartialDto dto, String field, T incoming, T stored) {
+        return (!hasPrevious || dto.isPresent(field)) ? incoming : stored;
+    }
+
+    private static Map<UUID, WorkoutExercise> indexExercises(Workout workout) {
+        Map<UUID, WorkoutExercise> index = new HashMap<>();
+        for (WorkoutExercise ex : workout.getExercises()) {
+            index.put(ex.getId(), ex);
+        }
+        return index;
+    }
+
+    private static Map<UUID, SetEntry> indexSets(WorkoutExercise exercise) {
+        Map<UUID, SetEntry> index = new HashMap<>();
+        for (SetEntry set : exercise.getSets()) {
+            index.put(set.getId(), set);
+        }
+        return index;
     }
 
     public Workout updateWorkoutForCurrentUser(Workout workout) {
@@ -261,18 +325,32 @@ public class WorkoutService {
         dto.setTitle(workout.getTitle());
         dto.setDurationMinutes(workout.getDurationMinutes());
         dto.setNotes(workout.getNotes());
+        dto.setStatus(workout.getStatus());
+        dto.setStartedAtUtc(workout.getStartedAt());
+        dto.setFinishedAtUtc(workout.getFinishedAt());
         dto.setCreatedAt(workout.getCreatedAt());
         dto.setUpdatedAt(workout.getUpdatedAt());
         dto.setVersion(workout.getVersion());
 
         if (workout.getExercises() != null) {
-            List<WorkoutExerciseDto> exerciseDtos = workout.getExercises().stream().map(we -> {
+            List<WorkoutExerciseDto> exerciseDtos = workout.getExercises().stream()
+                    .sorted(Comparator.comparing(WorkoutExercise::getSortOrder, Comparator.nullsLast(Comparator.naturalOrder())))
+                    .map(we -> {
                 WorkoutExerciseDto wed = new WorkoutExerciseDto();
                 wed.setId(we.getId());
                 wed.setExerciseName(we.getExerciseName());
                 wed.setSortOrder(we.getSortOrder());
+                wed.setExerciseRefId(we.getExerciseRefId());
+                wed.setNotes(we.getNotes());
+                wed.setPlanSets(we.getPlanSets());
+                wed.setPlanRepMin(we.getPlanRepMin());
+                wed.setPlanRepMax(we.getPlanRepMax());
+                wed.setPlanRir(we.getPlanRir());
+                wed.setPlanRestSec(we.getPlanRestSec());
                 if (we.getSets() != null) {
-                    List<SetEntryDto> setDtos = we.getSets().stream().map(se -> {
+                    List<SetEntryDto> setDtos = we.getSets().stream()
+                            .sorted(Comparator.comparing(SetEntry::getSetNumber, Comparator.nullsLast(Comparator.naturalOrder())))
+                            .map(se -> {
                         SetEntryDto sed = new SetEntryDto();
                         sed.setId(se.getId());
                         sed.setSetNumber(se.getSetNumber());
@@ -283,6 +361,8 @@ public class WorkoutService {
                         sed.setSetType(se.getSetType());
                         sed.setRestSeconds(se.getRestSeconds());
                         sed.setNotes(se.getNotes());
+                        sed.setRir(se.getRir());
+                        sed.setCompletedAtUtc(se.getCompletedAt());
                         return sed;
                     }).collect(Collectors.toList());
                     wed.setSets(setDtos);

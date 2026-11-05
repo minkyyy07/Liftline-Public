@@ -12,6 +12,9 @@ public class WorkoutDto {
     private String title;
     private Integer durationMinutes;
     private String notes;
+    private String status;
+    private Instant startedAtUtc;
+    private Instant finishedAtUtc;
     private List<WorkoutExerciseDto> exercises = new ArrayList<>();
     private Instant createdAt;
     private Instant updatedAt;
@@ -29,6 +32,12 @@ public class WorkoutDto {
     public void setDurationMinutes(Integer durationMinutes) { this.durationMinutes = durationMinutes; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public Instant getStartedAtUtc() { return startedAtUtc; }
+    public void setStartedAtUtc(Instant startedAtUtc) { this.startedAtUtc = startedAtUtc; }
+    public Instant getFinishedAtUtc() { return finishedAtUtc; }
+    public void setFinishedAtUtc(Instant finishedAtUtc) { this.finishedAtUtc = finishedAtUtc; }
     public List<WorkoutExerciseDto> getExercises() { return exercises; }
     public void setExercises(List<WorkoutExerciseDto> exercises) { this.exercises = exercises; }
     public Instant getCreatedAt() { return createdAt; }

@@ -11,7 +11,8 @@ import java.util.UUID;
 
 public interface WorkoutRepository extends JpaRepository<Workout, UUID> {
     List<Workout> findByUserIdOrderByWorkoutDateDesc(UUID userId);
-    Page<Workout> findByUserIdOrderByWorkoutDateDesc(UUID userId, Pageable pageable);
+    /** Stable paging: id is the tie-breaker so equal dates never skip or repeat rows across pages. */
+    Page<Workout> findByUserIdOrderByWorkoutDateDescIdAsc(UUID userId, Pageable pageable);
     Optional<Workout> findByIdAndUserId(UUID id, UUID userId);
     boolean existsByIdAndUserId(UUID id, UUID userId);
     void deleteByIdAndUserId(UUID id, UUID userId);

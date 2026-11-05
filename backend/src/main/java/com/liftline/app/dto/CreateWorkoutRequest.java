@@ -5,8 +5,10 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +31,12 @@ public class CreateWorkoutRequest {
     @Size(max = 1000, message = "Notes cannot exceed 1000 characters")
     private String notes;
 
+    @Pattern(regexp = "planned|active|finished", message = "Status must be planned, active or finished")
+    private String status;
+
+    private Instant startedAtUtc;
+    private Instant finishedAtUtc;
+
     @Valid
     private List<WorkoutExerciseDto> exercises = new ArrayList<>();
 
@@ -45,6 +53,12 @@ public class CreateWorkoutRequest {
     public void setDurationMinutes(Integer durationMinutes) { this.durationMinutes = durationMinutes; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+    public Instant getStartedAtUtc() { return startedAtUtc; }
+    public void setStartedAtUtc(Instant startedAtUtc) { this.startedAtUtc = startedAtUtc; }
+    public Instant getFinishedAtUtc() { return finishedAtUtc; }
+    public void setFinishedAtUtc(Instant finishedAtUtc) { this.finishedAtUtc = finishedAtUtc; }
     public List<WorkoutExerciseDto> getExercises() { return exercises; }
     public void setExercises(List<WorkoutExerciseDto> exercises) { this.exercises = exercises; }
 }

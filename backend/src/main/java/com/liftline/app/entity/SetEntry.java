@@ -40,6 +40,13 @@ public class SetEntry {
     @Column(name = "notes", length = 500)
     private String notes;
 
+    /** Reps in reserve (client field `rir`). Distinct from RPE. */
+    @Column(name = "rir")
+    private Integer rir;
+
+    @Column(name = "completed_at")
+    private Instant completedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -82,6 +89,10 @@ public class SetEntry {
     public void setRestSeconds(Integer restSeconds) { this.restSeconds = restSeconds; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public Integer getRir() { return rir; }
+    public void setRir(Integer rir) { this.rir = rir; }
+    public Instant getCompletedAt() { return completedAt; }
+    public void setCompletedAt(Instant completedAt) { this.completedAt = completedAt; }
     public Instant getCreatedAt() { return createdAt; }
     public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
