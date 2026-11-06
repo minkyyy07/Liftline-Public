@@ -6,6 +6,7 @@ abstract class TokenStorage {
 
   Future<String?> getRefreshToken();
   Future<void> setRefreshToken(String? token);
+  Future<void> setTokens(String? accessToken, String? refreshToken);
 
   Future<String?> getUserId();
   Future<void> setUserId(String? userId);
@@ -24,11 +25,14 @@ class SecureTokenStorage implements TokenStorage {
   final Map<String, String> _memoryFallback = {};
 
   SecureTokenStorage({FlutterSecureStorage? storage})
-      : _storage = storage ??
-            const FlutterSecureStorage(
-              aOptions: AndroidOptions(),
-              iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-            );
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            aOptions: AndroidOptions(),
+            iOptions: IOSOptions(
+              accessibility: KeychainAccessibility.first_unlock,
+            ),
+          );
 
   static const _kAccess = 'liftspire_access_token';
   static const _kRefresh = 'liftspire_refresh_token';
@@ -71,6 +75,12 @@ class SecureTokenStorage implements TokenStorage {
   Future<void> setRefreshToken(String? token) => _write(_kRefresh, token);
 
   @override
+  Future<void> setTokens(String? accessToken, String? refreshToken) async {
+    await _write(_kAccess, accessToken);
+    await _write(_kRefresh, refreshToken);
+  }
+
+  @override
   Future<String?> getUserId() => _read(_kUserId);
 
   @override
@@ -110,7 +120,14 @@ class InMemoryTokenStorage implements TokenStorage {
   Future<String?> getRefreshToken() async => _values['refresh'];
 
   @override
-  Future<void> setRefreshToken(String? token) async => _values['refresh'] = token;
+  Future<void> setRefreshToken(String? token) async =>
+      _values['refresh'] = token;
+
+  @override
+  Future<void> setTokens(String? accessToken, String? refreshToken) async {
+    _values['access'] = accessToken;
+    _values['refresh'] = refreshToken;
+  }
 
   @override
   Future<String?> getUserId() async => _values['userId'];
@@ -128,7 +145,8 @@ class InMemoryTokenStorage implements TokenStorage {
   Future<String?> getUserDisplayName() async => _values['displayName'];
 
   @override
-  Future<void> setUserDisplayName(String? name) async => _values['displayName'] = name;
+  Future<void> setUserDisplayName(String? name) async =>
+      _values['displayName'] = name;
 
   @override
   Future<void> clearAll() async => _values.clear();

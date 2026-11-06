@@ -1,168 +1,515 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:liftline_app/auth/api_client.dart';
+import 'package:liftline_app/auth/auth_service.dart';
 import 'package:liftline_app/auth/token_storage.dart';
+import 'package:liftline_app/db.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-class DelayControllableHttpClient extends http.BaseClient {
-  final Map<String, Completer<http.Response>> pendingRequests = {};
+class DelayedTokenStorage extends InMemoryTokenStorage {
+  Completer<void>? accessWriteStarted;
+  Completer<void>? accessWriteGate;
+  Completer<void>? refreshWriteStarted;
+  Completer<void>? refreshWriteGate;
+  Completer<void>? clearStarted;
+  Completer<void>? clearGate;
+
+  @override
+  Future<void> setTokens(String? accessToken, String? refreshToken) async {
+    final accessGate = accessWriteGate;
+    if (accessGate != null) {
+      accessWriteGate = null;
+      accessWriteStarted?.complete();
+      await accessGate.future;
+    }
+    await setAccessToken(accessToken);
+
+    final refreshGate = refreshWriteGate;
+    if (refreshGate != null) {
+      refreshWriteGate = null;
+      refreshWriteStarted?.complete();
+      await refreshGate.future;
+    }
+    await setRefreshToken(refreshToken);
+  }
+
+  @override
+  Future<void> clearAll() async {
+    final gate = clearGate;
+    if (gate != null) {
+      clearGate = null;
+      clearStarted?.complete();
+      await gate.future;
+    }
+    await super.clearAll();
+  }
+}
+
+class ControlledHttpClient extends http.BaseClient {
+  final Map<String, List<Future<http.Response>>> queuedResponses = {};
+  final Map<String, Completer<void>> started = {};
   final List<http.BaseRequest> executedRequests = [];
+
+  void enqueue(String method, String path, Future<http.Response> response) {
+    queuedResponses.putIfAbsent('$method:$path', () => []).add(response);
+  }
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     executedRequests.add(request);
     final key = '${request.method}:${request.url.path}';
+    final signal = started[key];
+    if (signal != null && !signal.isCompleted) signal.complete();
 
-    if (pendingRequests.containsKey(key)) {
-      final res = await pendingRequests[key]!.future;
-      return http.StreamedResponse(
-        Stream.value(res.bodyBytes),
-        res.statusCode,
-        headers: res.headers,
-      );
-    }
-
+    final queued = queuedResponses[key];
+    final response =
+        queued != null && queued.isNotEmpty
+            ? await queued.removeAt(0)
+            : http.Response(
+              '{}',
+              200,
+              headers: {'content-type': 'application/json'},
+            );
     return http.StreamedResponse(
-      Stream.value(utf8.encode('{}')),
-      200,
+      Stream.value(response.bodyBytes),
+      response.statusCode,
+      headers: response.headers,
+    );
+  }
+
+  http.Response jsonResponse(int statusCode, Map<String, Object?> body) {
+    return http.Response(
+      jsonEncode(body),
+      statusCode,
       headers: {'content-type': 'application/json'},
     );
   }
 }
 
+class NoopAppDb extends AppDb {
+  NoopAppDb() : super.isolated();
+
+  @override
+  Future<void> switchToUser(String? userId, {DatabaseFactory? factory}) async {}
+}
+
+Future<int?> commitSession(
+  ApiClient apiClient, {
+  required String accountId,
+  required String accessToken,
+  required String refreshToken,
+  int? expectedGeneration,
+}) async {
+  final generation = expectedGeneration ?? apiClient.reserveSessionChange();
+  final committed = await apiClient.commitLoginSession(
+    expectedGeneration: generation,
+    accountId: accountId,
+    accessToken: accessToken,
+    refreshToken: refreshToken,
+    email: '$accountId@example.com',
+    displayName: accountId,
+  );
+  return committed;
+}
+
+Future<void> expectAccountBTokens(DelayedTokenStorage storage) async {
+  expect(await storage.getAccessToken(), 'access-B');
+  expect(await storage.getRefreshToken(), 'refresh-B');
+  expect(await storage.getUserId(), 'B');
+}
+
 void main() {
-  group('ApiClient Session Generation & Isolation Tests', () {
-    late InMemoryTokenStorage tokenStorage;
-    late DelayControllableHttpClient mockHttp;
+  TestWidgetsFlutterBinding.ensureInitialized();
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  group('ApiClient session token race protection', () {
+    late DelayedTokenStorage storage;
+    late ControlledHttpClient httpClient;
     late ApiClient apiClient;
+    var sessionExpiredCallbacks = 0;
 
     setUp(() {
-      tokenStorage = InMemoryTokenStorage();
-      mockHttp = DelayControllableHttpClient();
+      storage = DelayedTokenStorage();
+      httpClient = ControlledHttpClient();
+      sessionExpiredCallbacks = 0;
       apiClient = ApiClient(
         baseUrl: 'http://test-server',
-        tokenStorage: tokenStorage,
-        client: mockHttp,
+        tokenStorage: storage,
+        client: httpClient,
+        onSessionExpired: () => sessionExpiredCallbacks++,
       );
     });
 
-    test('Scenario 1: Request A -> Login B -> Late 401 A does not refresh B token or retry A with B token', () async {
-      // 1. Session A starts
-      apiClient.switchSession('account_A');
-      await tokenStorage.setAccessToken('token_A');
-      await tokenStorage.setRefreshToken('refresh_A');
+    test(
+      'A -> B while access-token write is pending keeps B pair and header',
+      () async {
+        storage.accessWriteStarted = Completer<void>();
+        final accessGate = Completer<void>();
+        storage.accessWriteGate = accessGate;
 
-      final getWorkoutCompleter = Completer<http.Response>();
-      mockHttp.pendingRequests['GET:/api/workouts'] = getWorkoutCompleter;
+        final generationA = apiClient.reserveSessionChange();
+        final commitA = commitSession(
+          apiClient,
+          accountId: 'A',
+          accessToken: 'access-A',
+          refreshToken: 'refresh-A',
+          expectedGeneration: generationA,
+        );
+        await storage.accessWriteStarted!.future;
 
-      // Start Request A
-      final futureRequestA = apiClient.request(method: 'GET', endpoint: '/api/workouts');
+        final generationB = apiClient.reserveSessionChange();
+        final commitB = commitSession(
+          apiClient,
+          accountId: 'B',
+          accessToken: 'access-B',
+          refreshToken: 'refresh-B',
+          expectedGeneration: generationB,
+        );
+        accessGate.complete();
+
+        expect(await commitA, isNull);
+        await commitB;
+        await expectAccountBTokens(storage);
+
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Bearer access-B',
+        );
+        expect(sessionExpiredCallbacks, 0);
+      },
+    );
+
+    test(
+      'A -> B while refresh-token write is pending keeps B pair and header',
+      () async {
+        storage.refreshWriteStarted = Completer<void>();
+        final refreshGate = Completer<void>();
+        storage.refreshWriteGate = refreshGate;
+
+        final generationA = apiClient.reserveSessionChange();
+        final commitA = commitSession(
+          apiClient,
+          accountId: 'A',
+          accessToken: 'access-A',
+          refreshToken: 'refresh-A',
+          expectedGeneration: generationA,
+        );
+        await storage.refreshWriteStarted!.future;
+
+        final generationB = apiClient.reserveSessionChange();
+        final commitB = commitSession(
+          apiClient,
+          accountId: 'B',
+          accessToken: 'access-B',
+          refreshToken: 'refresh-B',
+          expectedGeneration: generationB,
+        );
+        refreshGate.complete();
+
+        expect(await commitA, isNull);
+        await commitB;
+        await expectAccountBTokens(storage);
+
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Bearer access-B',
+        );
+        expect(sessionExpiredCallbacks, 0);
+      },
+    );
+
+    test(
+      'A refresh -> B while access-token write is pending keeps B pair',
+      () async {
+        await storage.setTokens('expired-A', 'refresh-A');
+        apiClient.switchSession('A');
+        storage.accessWriteStarted = Completer<void>();
+        final accessGate = Completer<void>();
+        storage.accessWriteGate = accessGate;
+        httpClient.enqueue(
+          'GET',
+          '/api/protected',
+          Future.value(http.Response('{"error":"expired"}', 401)),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/refresh',
+          Future.value(
+            httpClient.jsonResponse(200, {
+              'accessToken': 'access-A-refreshed',
+              'refreshToken': 'refresh-A-refreshed',
+            }),
+          ),
+        );
+
+        final oldRequest = apiClient.request(
+          method: 'GET',
+          endpoint: '/api/protected',
+        );
+        await storage.accessWriteStarted!.future;
+        final generationB = apiClient.reserveSessionChange();
+        final commitB = commitSession(
+          apiClient,
+          accountId: 'B',
+          accessToken: 'access-B',
+          refreshToken: 'refresh-B',
+          expectedGeneration: generationB,
+        );
+        accessGate.complete();
+
+        await expectLater(oldRequest, throwsA(isA<SessionAbortedException>()));
+        await commitB;
+        await expectAccountBTokens(storage);
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Be' + 'arer access-B',
+        );
+      },
+    );
+
+    test(
+      'A refresh -> B while refresh-token write is pending keeps B pair',
+      () async {
+        await storage.setTokens('expired-A', 'refresh-A');
+        apiClient.switchSession('A');
+        storage.refreshWriteStarted = Completer<void>();
+        final refreshGate = Completer<void>();
+        storage.refreshWriteGate = refreshGate;
+        httpClient.enqueue(
+          'GET',
+          '/api/protected',
+          Future.value(http.Response('{"error":"expired"}', 401)),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/refresh',
+          Future.value(
+            httpClient.jsonResponse(200, {
+              'accessToken': 'access-A-refreshed',
+              'refreshToken': 'refresh-A-refreshed',
+            }),
+          ),
+        );
+
+        final oldRequest = apiClient.request(
+          method: 'GET',
+          endpoint: '/api/protected',
+        );
+        await storage.refreshWriteStarted!.future;
+        final generationB = apiClient.reserveSessionChange();
+        final commitB = commitSession(
+          apiClient,
+          accountId: 'B',
+          accessToken: 'access-B',
+          refreshToken: 'refresh-B',
+          expectedGeneration: generationB,
+        );
+        refreshGate.complete();
+
+        await expectLater(oldRequest, throwsA(isA<SessionAbortedException>()));
+        await commitB;
+        await expectAccountBTokens(storage);
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Be' + 'arer access-B',
+        );
+      },
+    );
+
+    test(
+      'A -> B during clearAll after 401 cannot clear B or invoke expiration callback',
+      () async {
+        await storage.setTokens('expired-A', 'refresh-A');
+        apiClient.switchSession('A');
+        storage.clearStarted = Completer<void>();
+        final clearGate = Completer<void>();
+        storage.clearGate = clearGate;
+        httpClient.enqueue(
+          'GET',
+          '/api/protected',
+          Future.value(http.Response('{"error":"expired"}', 401)),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/refresh',
+          Future.value(http.Response('{"error":"invalid"}', 401)),
+        );
+
+        final oldRequest = apiClient.request(
+          method: 'GET',
+          endpoint: '/api/protected',
+        );
+        await storage.clearStarted!.future;
+
+        final generationB = apiClient.reserveSessionChange();
+        final commitB = commitSession(
+          apiClient,
+          accountId: 'B',
+          accessToken: 'access-B',
+          refreshToken: 'refresh-B',
+          expectedGeneration: generationB,
+        );
+        clearGate.complete();
+
+        await expectLater(oldRequest, throwsA(isA<SessionAbortedException>()));
+        await commitB;
+        await expectAccountBTokens(storage);
+        expect(sessionExpiredCallbacks, 0);
+
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Bearer access-B',
+        );
+      },
+    );
+
+    test(
+      'late refresh success after A -> B cannot overwrite or authenticate with A',
+      () async {
+        await storage.setTokens('expired-A', 'refresh-A');
+        apiClient.switchSession('A');
+        final refreshStarted = Completer<void>();
+        httpClient.started['POST:/api/auth/refresh'] = refreshStarted;
+        final refreshResponse = Completer<http.Response>();
+        httpClient.enqueue(
+          'GET',
+          '/api/protected',
+          Future.value(http.Response('{"error":"expired"}', 401)),
+        );
+        httpClient.enqueue('POST', '/api/auth/refresh', refreshResponse.future);
+
+        final oldRequest = apiClient.request(
+          method: 'GET',
+          endpoint: '/api/protected',
+        );
+        await refreshStarted.future;
+
+        final generationB = apiClient.reserveSessionChange();
+        await commitSession(
+          apiClient,
+          accountId: 'B',
+          accessToken: 'access-B',
+          refreshToken: 'refresh-B',
+          expectedGeneration: generationB,
+        );
+        refreshResponse.complete(
+          httpClient.jsonResponse(200, {
+            'accessToken': 'access-A-refreshed',
+            'refreshToken': 'refresh-A-refreshed',
+          }),
+        );
+
+        await expectLater(oldRequest, throwsA(isA<SessionAbortedException>()));
+        await expectAccountBTokens(storage);
+        expect(sessionExpiredCallbacks, 0);
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Bearer access-B',
+        );
+      },
+    );
+
+    test(
+      'ordinary refresh commits the new pair and retries with the new access token',
+      () async {
+        await storage.setTokens('expired-A', 'refresh-A');
+        apiClient.switchSession('A');
+        httpClient.enqueue(
+          'GET',
+          '/api/protected',
+          Future.value(http.Response('{"error":"expired"}', 401)),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/refresh',
+          Future.value(
+            httpClient.jsonResponse(200, {
+              'accessToken': 'access-A-new',
+              'refreshToken': 'refresh-A-new',
+            }),
+          ),
+        );
+
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+
+        expect(await storage.getAccessToken(), 'access-A-new');
+        expect(await storage.getRefreshToken(), 'refresh-A-new');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Bearer access-A-new',
+        );
+        expect(sessionExpiredCallbacks, 0);
+      },
+    );
+
+    test('ordinary logout clears only the logged-in session', () async {
+      await storage.setTokens('access-A', 'refresh-A');
+      apiClient.switchSession('A');
+      final authService = AuthService.forTest(
+        tokenStorage: storage,
+        apiClient: apiClient,
+        appDb: NoopAppDb(),
+      );
+
+      await authService.logout();
+
+      expect(await storage.getAccessToken(), isNull);
+      expect(await storage.getRefreshToken(), isNull);
+      expect(apiClient.sessionAccountId, isNull);
+      expect(sessionExpiredCallbacks, 0);
       expect(
-        futureRequestA,
-        throwsA(isA<SessionAbortedException>()),
+        httpClient.executedRequests.single.headers['authorization'],
+        'Bearer access-A',
       );
-
-      // 2. User switches to Account B while Request A is in-flight
-      apiClient.switchSession('account_B');
-      await tokenStorage.setAccessToken('token_B');
-      await tokenStorage.setRefreshToken('refresh_B');
-
-      // 3. Late 401 arrives for Request A
-      getWorkoutCompleter.complete(http.Response('{"error":"Unauthorized"}', 401, headers: {'content-type': 'application/json'}));
-
-      await pumpEventQueue();
-
-      // Verify token in storage remains token_B
-      expect(await tokenStorage.getAccessToken(), 'token_B');
-      expect(await tokenStorage.getRefreshToken(), 'refresh_B');
-
-      // Ensure no refresh request was sent using refresh_B for the old A request
-      final refreshCalls = mockHttp.executedRequests.where((r) => r.url.path.contains('/refresh')).toList();
-      expect(refreshCalls, isEmpty);
     });
 
-    test('Scenario 2: Refresh A -> Login B -> Late success A does not overwrite B tokens', () async {
-      // 1. Session A starts and gets 401, triggering refresh
-      apiClient.switchSession('account_A');
-      await tokenStorage.setAccessToken('token_A_expired');
-      await tokenStorage.setRefreshToken('refresh_A');
+    test(
+      'late logout response from A cannot clear B or invoke expiration callback',
+      () async {
+        await storage.setTokens('access-A', 'refresh-A');
+        apiClient.switchSession('A');
+        final logoutStarted = Completer<void>();
+        httpClient.started['POST:/api/auth/logout'] = logoutStarted;
+        final logoutResponse = Completer<http.Response>();
+        httpClient.enqueue('POST', '/api/auth/logout', logoutResponse.future);
+        final authService = AuthService.forTest(
+          tokenStorage: storage,
+          apiClient: apiClient,
+          appDb: NoopAppDb(),
+        );
 
-      final refreshCompleter = Completer<http.Response>();
-      mockHttp.pendingRequests['POST:/api/auth/refresh'] = refreshCompleter;
+        final logout = authService.logout();
+        await logoutStarted.future;
+        final generationB = apiClient.reserveSessionChange();
+        await commitSession(
+          apiClient,
+          accountId: 'B',
+          accessToken: 'access-B',
+          refreshToken: 'refresh-B',
+          expectedGeneration: generationB,
+        );
+        logoutResponse.complete(http.Response('{}', 200));
 
-      // Trigger request that gets 401
-      mockHttp.pendingRequests['GET:/api/profile'] = Completer<http.Response>()
-        ..complete(http.Response('{"error":"Expired"}', 401, headers: {'content-type': 'application/json'}));
-
-      final reqA = apiClient.request(method: 'GET', endpoint: '/api/profile');
-
-      // Allow request to reach refresh
-      await Future.delayed(const Duration(milliseconds: 10));
-
-      // 2. Account switches to B
-      apiClient.switchSession('account_B');
-      await tokenStorage.setAccessToken('token_B_active');
-      await tokenStorage.setRefreshToken('refresh_B_active');
-
-      // 3. Late refresh success for A arrives
-      refreshCompleter.complete(http.Response(
-        jsonEncode({'accessToken': 'new_token_A', 'refreshToken': 'new_refresh_A'}),
-        200,
-        headers: {'content-type': 'application/json'},
-      ));
-
-      // reqA must be aborted
-      expect(
-        reqA,
-        throwsA(isA<SessionAbortedException>()),
-      );
-
-      // Account B tokens MUST NOT be overwritten!
-      expect(await tokenStorage.getAccessToken(), 'token_B_active');
-      expect(await tokenStorage.getRefreshToken(), 'refresh_B_active');
-    });
-
-    test('Scenario 3: Refresh A -> Login B -> Late error A does not clear B tokens or fire onSessionExpired for B', () async {
-      // 1. Session A starts and gets 401
-      apiClient.switchSession('account_A');
-      await tokenStorage.setAccessToken('token_A_expired');
-      await tokenStorage.setRefreshToken('refresh_A');
-
-      bool sessionExpiredCallbackFired = false;
-      apiClient.onSessionExpired = () {
-        sessionExpiredCallbackFired = true;
-      };
-
-      final refreshCompleter = Completer<http.Response>();
-      mockHttp.pendingRequests['POST:/api/auth/refresh'] = refreshCompleter;
-
-      mockHttp.pendingRequests['GET:/api/profile'] = Completer<http.Response>()
-        ..complete(http.Response('{"error":"Expired"}', 401, headers: {'content-type': 'application/json'}));
-
-      final reqA = apiClient.request(method: 'GET', endpoint: '/api/profile');
-      await Future.delayed(const Duration(milliseconds: 10));
-
-      // 2. Account switches to B
-      apiClient.switchSession('account_B');
-      await tokenStorage.setAccessToken('token_B_valid');
-      await tokenStorage.setRefreshToken('refresh_B_valid');
-
-      // 3. Late refresh failure arrives for A (e.g. 401/invalid token)
-      refreshCompleter.complete(http.Response('{"error":"Invalid refresh token"}', 401, headers: {'content-type': 'application/json'}));
-
-      // reqA must be aborted
-      expect(
-        reqA,
-        throwsA(isA<SessionAbortedException>()),
-      );
-
-      // onSessionExpired must NOT have fired for Account B!
-      expect(sessionExpiredCallbackFired, isFalse);
-
-      // B tokens must remain intact
-      expect(await tokenStorage.getAccessToken(), 'token_B_valid');
-      expect(await tokenStorage.getRefreshToken(), 'refresh_B_valid');
-    });
+        await logout;
+        await expectAccountBTokens(storage);
+        expect(apiClient.sessionAccountId, 'B');
+        expect(sessionExpiredCallbacks, 0);
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          'Bearer access-B',
+        );
+      },
+    );
   });
 }

@@ -8,11 +8,7 @@ class AuthUser {
   final String email;
   final String? displayName;
 
-  const AuthUser({
-    required this.id,
-    required this.email,
-    this.displayName,
-  });
+  const AuthUser({required this.id, required this.email, this.displayName});
 
   String get presentationName {
     if (displayName != null && displayName!.trim().isNotEmpty) {
@@ -109,10 +105,7 @@ class AuthService extends ChangeNotifier {
       await _apiClient.request(
         method: 'POST',
         endpoint: '/api/auth/register',
-        body: {
-          'email': email.trim().toLowerCase(),
-          'password': password,
-        },
+        body: {'email': email.trim().toLowerCase(), 'password': password},
         retryOn401: false,
       );
     } catch (e) {
@@ -128,38 +121,44 @@ class AuthService extends ChangeNotifier {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
+    final loginGeneration = _apiClient.reserveSessionChange();
 
     try {
-      final res = await _apiClient.request(
-        method: 'POST',
-        endpoint: '/api/auth/login',
-        body: {
-          'email': email.trim().toLowerCase(),
-          'password': password,
-        },
-        retryOn401: false,
-      ) as Map<String, dynamic>;
+      final res =
+          await _apiClient.request(
+                method: 'POST',
+                endpoint: '/api/auth/login',
+                body: {
+                  'email': email.trim().toLowerCase(),
+                  'password': password,
+                },
+                retryOn401: false,
+              )
+              as Map<String, dynamic>;
 
-      final accessToken = res['accessToken'] as String? ?? res['token'] as String;
+      final accessToken =
+          res['accessToken'] as String? ?? res['token'] as String;
       final refreshToken = res['refreshToken'] as String?;
       final userId = res['userId'] as String? ?? '';
       final userEmail = res['email'] as String? ?? email.trim().toLowerCase();
       final displayName = res['displayName'] as String?;
 
-      await _tokenStorage.setAccessToken(accessToken);
-      if (refreshToken != null) {
-        await _tokenStorage.setRefreshToken(refreshToken);
-      }
-      await _tokenStorage.setUserId(userId);
-      await _tokenStorage.setUserEmail(userEmail);
-      await _tokenStorage.setUserDisplayName(displayName);
+      final committedGeneration = await _apiClient.commitLoginSession(
+        expectedGeneration: loginGeneration,
+        accountId: userId,
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        email: userEmail,
+        displayName: displayName,
+      );
+      if (committedGeneration == null) throw SessionAbortedException();
 
       _user = AuthUser(id: userId, email: userEmail, displayName: displayName);
-      _apiClient.switchSession(userId);
 
       // Switch active database to this user's isolated database
       await _db.switchToUser(userId);
     } catch (e) {
+      _apiClient.cancelSessionChange(loginGeneration);
       _errorMessage = e.toString();
       rethrow;
     } finally {
@@ -171,9 +170,17 @@ class AuthService extends ChangeNotifier {
   Future<void> logout() async {
     _isLoading = true;
     notifyListeners();
+    final accountId = _apiClient.sessionAccountId;
+    final generation = _apiClient.sessionGeneration;
 
     try {
-      final refreshToken = await _tokenStorage.getRefreshToken();
+      final refreshToken = await _apiClient.getRefreshTokenForSession(
+        accountId,
+        generation,
+      );
+      if (!_apiClient.isCurrentSession(accountId, generation)) {
+        throw SessionAbortedException();
+      }
       if (refreshToken != null && refreshToken.isNotEmpty) {
         await _apiClient.request(
           method: 'POST',
@@ -184,19 +191,26 @@ class AuthService extends ChangeNotifier {
       }
     } catch (_) {
       // Allow offline logout even if network request fails
-    } finally {
-      await _tokenStorage.clearAll();
-      _user = null;
-      _apiClient.switchSession(null);
-      await _db.switchToUser(null);
-      _isLoading = false;
-      notifyListeners();
     }
+
+    final endedGeneration = await _apiClient.clearSessionIfCurrent(
+      accountId: accountId,
+      generation: generation,
+    );
+    if (endedGeneration != null &&
+        _apiClient.isCurrentSession(null, endedGeneration)) {
+      _user = null;
+      await _db.switchToUser(null);
+    }
+    _isLoading = false;
+    notifyListeners();
   }
 
   Future<void> logoutAll() async {
     _isLoading = true;
     notifyListeners();
+    final accountId = _apiClient.sessionAccountId;
+    final generation = _apiClient.sessionGeneration;
 
     try {
       await _apiClient.request(
@@ -206,9 +220,15 @@ class AuthService extends ChangeNotifier {
       );
     } catch (_) {}
 
-    await _tokenStorage.clearAll();
-    _user = null;
-    await _db.switchToUser(null);
+    final endedGeneration = await _apiClient.clearSessionIfCurrent(
+      accountId: accountId,
+      generation: generation,
+    );
+    if (endedGeneration != null &&
+        _apiClient.isCurrentSession(null, endedGeneration)) {
+      _user = null;
+      await _db.switchToUser(null);
+    }
     _isLoading = false;
     notifyListeners();
   }
@@ -219,16 +239,22 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final res = await _apiClient.request(
-        method: 'PATCH',
-        endpoint: '/api/user/profile',
-        body: {'displayName': newName.trim()},
-      ) as Map<String, dynamic>;
+      final res =
+          await _apiClient.request(
+                method: 'PATCH',
+                endpoint: '/api/user/profile',
+                body: {'displayName': newName.trim()},
+              )
+              as Map<String, dynamic>;
 
       final updatedName = res['displayName'] as String?;
       await _tokenStorage.setUserDisplayName(updatedName);
       if (_user != null) {
-        _user = AuthUser(id: _user!.id, email: _user!.email, displayName: updatedName);
+        _user = AuthUser(
+          id: _user!.id,
+          email: _user!.email,
+          displayName: updatedName,
+        );
       }
     } catch (e) {
       _errorMessage = e.toString();
@@ -239,7 +265,10 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<void> changePassword(String currentPassword, String newPassword) async {
+  Future<void> changePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -248,16 +277,21 @@ class AuthService extends ChangeNotifier {
       await _apiClient.request(
         method: 'POST',
         endpoint: '/api/user/change-password',
-        body: {
-          'currentPassword': currentPassword,
-          'newPassword': newPassword,
-        },
+        body: {'currentPassword': currentPassword, 'newPassword': newPassword},
       );
 
       // Server revokes all refresh sessions on password change
-      await _tokenStorage.clearAll();
-      _user = null;
-      await _db.switchToUser(null);
+      final accountId = _apiClient.sessionAccountId;
+      final generation = _apiClient.sessionGeneration;
+      final endedGeneration = await _apiClient.clearSessionIfCurrent(
+        accountId: accountId,
+        generation: generation,
+      );
+      if (endedGeneration != null &&
+          _apiClient.isCurrentSession(null, endedGeneration)) {
+        _user = null;
+        await _db.switchToUser(null);
+      }
     } catch (e) {
       _errorMessage = e.toString();
       rethrow;
