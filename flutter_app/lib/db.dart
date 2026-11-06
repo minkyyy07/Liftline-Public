@@ -21,6 +21,7 @@ class AppDb {
 
   int _accountEpoch = 0;
   int get accountEpoch => _accountEpoch;
+  int _switchGeneration = 0;
 
   final List<void Function()> _switchListeners = [];
   void addDatabaseSwitchListener(void Function() listener) {
@@ -46,34 +47,28 @@ class AppDb {
   /// Verifies if the active database and account epoch still match the request origin.
   /// Prevents late network responses from Account A from writing into Account B.
   bool isCurrentAccount(String? expectedUserId, int expectedEpoch) {
-    return _currentUserId == expectedUserId && _accountEpoch == expectedEpoch && isOpen;
+    return _currentUserId == expectedUserId &&
+        _accountEpoch == expectedEpoch &&
+        isOpen;
   }
 
   /// Test hook: use an already opened database.
   void useDatabase(Database d) {
+    _switchGeneration++;
     _db = d;
     _notifyDatabaseSwitched();
   }
 
   Future<void> init({DatabaseFactory? factory}) async {
-    final f = factory ?? databaseFactory;
-    final dbPath = await f.getDatabasesPath();
-    _currentUserId = null;
-    _db = await openLiftlineDb(p.join(dbPath, 'liftline.db'), factory: f);
-    _notifyDatabaseSwitched();
+    await switchToUser(null, factory: factory);
   }
 
   /// Switches active database to a specific user account, or guest if [userId] is null.
   /// Each account gets a physically isolated SQLite database file.
   Future<void> switchToUser(String? userId, {DatabaseFactory? factory}) async {
+    final generation = ++_switchGeneration;
     if (_currentUserId == userId && _db != null && _db!.isOpen) return;
 
-    if (_db != null && _db!.isOpen) {
-      await _db!.close();
-      _db = null;
-    }
-
-    _currentUserId = userId;
     final f = factory ?? databaseFactory;
     final dbPath = await f.getDatabasesPath();
     final String filename;
@@ -84,15 +79,44 @@ class AppDb {
       filename = 'liftline_user_$safeId.db';
     }
 
-    _db = await openLiftlineDb(p.join(dbPath, filename), factory: f);
+    final openedDb = await openLiftlineDb(
+      p.join(dbPath, filename),
+      factory: f,
+      singleInstance: false,
+    );
+    if (generation != _switchGeneration) {
+      await openedDb.close();
+      return;
+    }
+
+    final previousDb = _db;
+    _db = openedDb;
+    _currentUserId = userId;
     _notifyDatabaseSwitched();
+    if (previousDb != null && previousDb.isOpen) {
+      await previousDb.close();
+    }
+  }
+
+  /// Closes the active connection and removes its account identity without deleting data.
+  Future<void> deactivate() async {
+    _switchGeneration++;
+    final previousDb = _db;
+    _db = null;
+    _currentUserId = null;
+    _notifyDatabaseSwitched();
+    if (previousDb != null && previousDb.isOpen) {
+      await previousDb.close();
+    }
   }
 
   /// Explicitly copies guest workouts and exercises into the active account database.
   /// Existing account data is not overwritten; duplicate IDs are skipped.
   Future<int> copyGuestDataToCurrentAccount({DatabaseFactory? factory}) async {
     if (isGuest) {
-      throw StateError('Cannot copy guest data while in guest mode. Login to an account first.');
+      throw StateError(
+        'Cannot copy guest data while in guest mode. Login to an account first.',
+      );
     }
 
     final f = factory ?? databaseFactory;
@@ -161,7 +185,11 @@ class AppDb {
 /// Opens (creating / migrating) the Liftline database at [path].
 /// Before migrating an existing older database a consistent backup copy is
 /// written next to it with `VACUUM INTO` (safe for WAL databases).
-Future<Database> openLiftlineDb(String path, {DatabaseFactory? factory}) async {
+Future<Database> openLiftlineDb(
+  String path, {
+  DatabaseFactory? factory,
+  bool singleInstance = true,
+}) async {
   final f = factory ?? databaseFactory;
   if (await f.databaseExists(path)) {
     final probe = await f.openDatabase(
@@ -190,6 +218,7 @@ Future<Database> openLiftlineDb(String path, {DatabaseFactory? factory}) async {
     path,
     options: OpenDatabaseOptions(
       version: kDbVersion,
+      singleInstance: singleInstance,
       onCreate: (db, version) async {
         await createV1Schema(db);
         await migrateV1ToV2(db);
@@ -389,11 +418,17 @@ Future<void> migrateV3ToV4(DatabaseExecutor db) async {
 /// Ensures offline modifications, conflict tracking, and safe idempotent sync.
 Future<void> migrateV4ToV5(DatabaseExecutor db) async {
   await db.execute('ALTER TABLE workouts ADD COLUMN server_id TEXT');
-  await db.execute('ALTER TABLE workouts ADD COLUMN local_updated_at INTEGER NOT NULL DEFAULT 0');
+  await db.execute(
+    'ALTER TABLE workouts ADD COLUMN local_updated_at INTEGER NOT NULL DEFAULT 0',
+  );
   await db.execute('ALTER TABLE workouts ADD COLUMN server_updated_at TEXT');
-  await db.execute("ALTER TABLE workouts ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'synced'");
+  await db.execute(
+    "ALTER TABLE workouts ADD COLUMN sync_status TEXT NOT NULL DEFAULT 'synced'",
+  );
   await db.execute('ALTER TABLE workouts ADD COLUMN sync_error TEXT');
-  await db.execute('ALTER TABLE workouts ADD COLUMN client_version INTEGER NOT NULL DEFAULT 1');
+  await db.execute(
+    'ALTER TABLE workouts ADD COLUMN client_version INTEGER NOT NULL DEFAULT 1',
+  );
   await db.execute('''
     CREATE TABLE IF NOT EXISTS sync_tombstones (
       id TEXT PRIMARY KEY,
@@ -411,14 +446,20 @@ Future<void> migrateV4ToV5(DatabaseExecutor db) async {
       attempts INTEGER NOT NULL DEFAULT 0,
       last_error TEXT
     )''');
-  await db.execute('CREATE INDEX IF NOT EXISTS idx_workouts_server_id ON workouts(server_id)');
-  await db.execute('CREATE INDEX IF NOT EXISTS idx_sync_queue_workout ON sync_queue(workout_id)');
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_workouts_server_id ON workouts(server_id)',
+  );
+  await db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_sync_queue_workout ON sync_queue(workout_id)',
+  );
 }
 
 /// v5 -> v6: server_version (revision) tracking and persistent workout_conflict_drafts table.
 /// Preserves conflicting server and local versions across app restarts, enabling explicit conflict resolution.
 Future<void> migrateV5ToV6(DatabaseExecutor db) async {
-  await db.execute('ALTER TABLE workouts ADD COLUMN server_version INTEGER NOT NULL DEFAULT 0');
+  await db.execute(
+    'ALTER TABLE workouts ADD COLUMN server_version INTEGER NOT NULL DEFAULT 0',
+  );
   await db.execute('''
     CREATE TABLE IF NOT EXISTS workout_conflict_drafts (
       workout_id TEXT PRIMARY KEY,

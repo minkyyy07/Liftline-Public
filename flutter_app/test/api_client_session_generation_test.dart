@@ -269,7 +269,7 @@ void main() {
         await apiClient.request(method: 'GET', endpoint: '/api/protected');
         expect(
           httpClient.executedRequests.last.headers['authorization'],
-          'Be' + 'arer access-B',
+          'Bearer access-B',
         );
       },
     );
@@ -319,7 +319,7 @@ void main() {
         await apiClient.request(method: 'GET', endpoint: '/api/protected');
         expect(
           httpClient.executedRequests.last.headers['authorization'],
-          'Be' + 'arer access-B',
+          'Bearer access-B',
         );
       },
     );
@@ -347,6 +347,10 @@ void main() {
           method: 'GET',
           endpoint: '/api/protected',
         );
+        final oldRequestFailure = expectLater(
+          oldRequest,
+          throwsA(isA<SessionAbortedException>()),
+        );
         await storage.clearStarted!.future;
 
         final generationB = apiClient.reserveSessionChange();
@@ -359,7 +363,7 @@ void main() {
         );
         clearGate.complete();
 
-        await expectLater(oldRequest, throwsA(isA<SessionAbortedException>()));
+        await oldRequestFailure;
         await commitB;
         await expectAccountBTokens(storage);
         expect(sessionExpiredCallbacks, 0);
@@ -508,6 +512,150 @@ void main() {
         expect(
           httpClient.executedRequests.last.headers['authorization'],
           'Bearer access-B',
+        );
+      },
+    );
+
+    test(
+      'failed B login logs out safely if A token cleanup finishes afterward',
+      () async {
+        await storage.setTokens('access-A', 'refresh-A');
+        await storage.setUserId('A');
+        await storage.setUserEmail('A@example.com');
+        apiClient.switchSession('A');
+        final authService = AuthService.forTest(
+          tokenStorage: storage,
+          apiClient: apiClient,
+          appDb: NoopAppDb(),
+        );
+        await authService.init();
+
+        storage.clearStarted = Completer<void>();
+        final clearGate = Completer<void>();
+        storage.clearGate = clearGate;
+        httpClient.enqueue(
+          'GET',
+          '/api/protected',
+          Future.value(http.Response('{"error":"expired"}', 401)),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/refresh',
+          Future.value(http.Response('{"error":"invalid"}', 401)),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/login',
+          Future.value(http.Response('{"error":"bad credentials"}', 401)),
+        );
+        final loginStarted = Completer<void>();
+        httpClient.started['POST:/api/auth/login'] = loginStarted;
+
+        final oldRequest = apiClient.request(
+          method: 'GET',
+          endpoint: '/api/protected',
+        );
+        final clearRaceRequestFailure = expectLater(
+          oldRequest,
+          throwsA(isA<SessionAbortedException>()),
+        );
+        await storage.clearStarted!.future;
+        final failedLogin = authService.login(
+          'b@example.com',
+          'wrong-password',
+        );
+        await loginStarted.future;
+        clearGate.complete();
+        await expectLater(
+          failedLogin,
+          throwsA(anyOf(isA<ApiException>(), isA<SessionAbortedException>())),
+        );
+        await clearRaceRequestFailure;
+
+        expect(authService.isAuthenticated, isFalse);
+        expect(authService.user, isNull);
+        expect(apiClient.sessionAccountId, isNull);
+        expect(await storage.getAccessToken(), isNull);
+        expect(await storage.getRefreshToken(), isNull);
+        expect(authService.errorMessage, contains('сессия завершена'));
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers.containsKey('authorization'),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'failed B login restores A after its delayed refresh-token update',
+      () async {
+        await storage.setTokens('expired-A', 'refresh-A');
+        await storage.setUserId('A');
+        await storage.setUserEmail('A@example.com');
+        apiClient.switchSession('A');
+        final authService = AuthService.forTest(
+          tokenStorage: storage,
+          apiClient: apiClient,
+          appDb: NoopAppDb(),
+        );
+        await authService.init();
+
+        storage.refreshWriteStarted = Completer<void>();
+        final refreshGate = Completer<void>();
+        storage.refreshWriteGate = refreshGate;
+        httpClient.enqueue(
+          'GET',
+          '/api/protected',
+          Future.value(http.Response('{"error":"expired"}', 401)),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/refresh',
+          Future.value(
+            httpClient.jsonResponse(200, {
+              'accessToken': 'access-A-refreshed',
+              'refreshToken': 'refresh-A-refreshed',
+            }),
+          ),
+        );
+        httpClient.enqueue(
+          'POST',
+          '/api/auth/login',
+          Future.value(http.Response('{"error":"bad credentials"}', 401)),
+        );
+        final loginStarted = Completer<void>();
+        httpClient.started['POST:/api/auth/login'] = loginStarted;
+
+        final oldRequest = apiClient.request(
+          method: 'GET',
+          endpoint: '/api/protected',
+        );
+        final oldRequestFailure = expectLater(
+          oldRequest,
+          throwsA(isA<SessionAbortedException>()),
+        );
+        await storage.refreshWriteStarted!.future;
+        final failedLogin = authService.login(
+          'b@example.com',
+          'wrong-password',
+        );
+        await loginStarted.future;
+        refreshGate.complete();
+        await expectLater(
+          failedLogin,
+          throwsA(anyOf(isA<ApiException>(), isA<SessionAbortedException>())),
+        );
+        await oldRequestFailure;
+
+        expect(authService.isAuthenticated, isTrue);
+        expect(authService.user?.id, 'A');
+        expect(apiClient.sessionAccountId, 'A');
+        expect(await storage.getAccessToken(), 'access-A-refreshed');
+        expect(await storage.getRefreshToken(), 'refresh-A-refreshed');
+        await apiClient.request(method: 'GET', endpoint: '/api/protected');
+        expect(
+          httpClient.executedRequests.last.headers['authorization'],
+          isNotNull,
         );
       },
     );

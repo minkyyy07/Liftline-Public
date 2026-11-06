@@ -25,6 +25,41 @@ class SessionAbortedException implements Exception {
   String toString() => message;
 }
 
+class TokenSessionSnapshot {
+  const TokenSessionSnapshot({
+    required this.accountId,
+    required this.accessToken,
+    required this.refreshToken,
+    required this.userId,
+    required this.email,
+    required this.displayName,
+  });
+
+  final String? accountId;
+  final String? accessToken;
+  final String? refreshToken;
+  final String? userId;
+  final String? email;
+  final String? displayName;
+
+  bool get isRestorable {
+    if (accountId == null) {
+      return accessToken == null &&
+          refreshToken == null &&
+          userId == null &&
+          email == null &&
+          displayName == null;
+    }
+    return accessToken != null &&
+        accessToken!.isNotEmpty &&
+        refreshToken != null &&
+        refreshToken!.isNotEmpty &&
+        userId == accountId &&
+        email != null &&
+        email!.isNotEmpty;
+  }
+}
+
 class ApiClient {
   static const String _kBaseUrlPrefKey = 'liftspire_api_base_url';
   static const String defaultEmulatorUrl = 'http://10.0.2.2:8080';
@@ -59,10 +94,43 @@ class ApiClient {
     return _sessionGeneration;
   }
 
-  void cancelSessionChange(int expectedGeneration) {
-    if (_sessionGeneration == expectedGeneration) {
-      _sessionTransitionPending = false;
-    }
+  Future<bool?> cancelSessionChange(int expectedGeneration) {
+    return _withTokenOperation(() async {
+      if (_sessionGeneration != expectedGeneration ||
+          !_sessionTransitionPending) {
+        return null;
+      }
+
+      final accountId = _sessionAccountId;
+      final accessToken = await tokenStorage.getAccessToken();
+      final refreshToken = await tokenStorage.getRefreshToken();
+      final storedAccountId = await tokenStorage.getUserId();
+      final email = await tokenStorage.getUserEmail();
+      if (accountId == null &&
+          accessToken == null &&
+          refreshToken == null &&
+          storedAccountId == null &&
+          email == null) {
+        _sessionTransitionPending = false;
+        return true;
+      }
+      if (accountId != null &&
+          accessToken != null &&
+          accessToken.isNotEmpty &&
+          refreshToken != null &&
+          refreshToken.isNotEmpty &&
+          storedAccountId == accountId &&
+          email != null &&
+          email.isNotEmpty) {
+        _sessionTransitionPending = false;
+        return true;
+      }
+
+      await tokenStorage.clearAll();
+      if (_sessionGeneration != expectedGeneration) return null;
+      switchSession(null);
+      return false;
+    });
   }
 
   bool isCurrentSession(String? expectedAccountId, int expectedGeneration) {
@@ -92,6 +160,54 @@ class ApiClient {
         throw SessionAbortedException();
       }
       return token;
+    });
+  }
+
+  Future<TokenSessionSnapshot?> captureTokenSession({
+    required int expectedGeneration,
+  }) {
+    return _withTokenOperation(() async {
+      if (_sessionGeneration != expectedGeneration) return null;
+      final snapshot = TokenSessionSnapshot(
+        accountId: _sessionAccountId,
+        accessToken: await tokenStorage.getAccessToken(),
+        refreshToken: await tokenStorage.getRefreshToken(),
+        userId: await tokenStorage.getUserId(),
+        email: await tokenStorage.getUserEmail(),
+        displayName: await tokenStorage.getUserDisplayName(),
+      );
+      return _sessionGeneration == expectedGeneration ? snapshot : null;
+    });
+  }
+
+  Future<int?> restoreTokenSessionIfCurrent({
+    required String accountId,
+    required int generation,
+    required TokenSessionSnapshot snapshot,
+  }) {
+    return _withTokenOperation(() async {
+      if (!isCurrentSession(accountId, generation) || !snapshot.isRestorable) {
+        return null;
+      }
+
+      if (snapshot.accountId == null) {
+        await tokenStorage.clearAll();
+      } else {
+        await tokenStorage.setTokens(
+          snapshot.accessToken,
+          snapshot.refreshToken,
+        );
+        if (!isCurrentSession(accountId, generation)) return null;
+        await tokenStorage.setUserId(snapshot.userId);
+        if (!isCurrentSession(accountId, generation)) return null;
+        await tokenStorage.setUserEmail(snapshot.email);
+        if (!isCurrentSession(accountId, generation)) return null;
+        await tokenStorage.setUserDisplayName(snapshot.displayName);
+      }
+
+      if (!isCurrentSession(accountId, generation)) return null;
+      switchSession(snapshot.accountId);
+      return _sessionGeneration;
     });
   }
 
@@ -347,16 +463,18 @@ class ApiClient {
           throw UnsupportedError('Unsupported HTTP method: $method');
       }
     } on SocketException {
-      if (!isCurrentSession(reqAccountId, reqGeneration))
+      if (!isCurrentSession(reqAccountId, reqGeneration)) {
         throw SessionAbortedException();
+      }
       throw ApiException(
         statusCode: 0,
         message:
             'Не удалось подключиться к серверу ($_baseUrl). Проверьте интернет или адрес сервера.',
       );
     } catch (e) {
-      if (!isCurrentSession(reqAccountId, reqGeneration))
+      if (!isCurrentSession(reqAccountId, reqGeneration)) {
         throw SessionAbortedException();
+      }
       if (e is ApiException || e is SessionAbortedException) rethrow;
       throw ApiException(statusCode: 0, message: 'Ошибка сети: $e');
     }
