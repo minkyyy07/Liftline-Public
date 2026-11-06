@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:liftline_app/auth/api_client.dart';
 import 'package:liftline_app/auth/auth_service.dart';
+import 'package:liftline_app/auth/cloud_workout_sync.dart';
+import 'package:liftline_app/auth/sync_queue_runner.dart';
 import 'package:liftline_app/auth/token_storage.dart';
 import 'package:liftline_app/db.dart';
 import 'package:liftline_app/repo.dart';
@@ -71,6 +73,10 @@ class ControlledAppDb extends AppDb {
 
 class LoginHttpClient extends http.BaseClient {
   final Map<String, List<http.Response>> _responses = {};
+  final List<http.BaseRequest> requests = [];
+  Completer<void>? loginResponseDelivered;
+  Completer<void>? workoutRequestStarted;
+  Completer<void>? workoutResponseGate;
 
   void enqueue(
     String method,
@@ -91,6 +97,24 @@ class LoginHttpClient extends http.BaseClient {
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    if (request.method == 'POST' && request.url.path == '/api/auth/login') {
+      final delivered = loginResponseDelivered;
+      if (delivered != null && !delivered.isCompleted) delivered.complete();
+    }
+    if (request.method == 'POST' && request.url.path == '/api/workouts') {
+      final started = workoutRequestStarted;
+      if (started != null && !started.isCompleted) started.complete();
+      final gate = workoutResponseGate;
+      if (gate != null) {
+        await gate.future;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(jsonEncode({'id': 'server-workout'}))),
+          201,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+    }
     final responses = _responses['${request.method}:${request.url.path}'];
     final response =
         responses != null && responses.isNotEmpty
@@ -104,6 +128,44 @@ class LoginHttpClient extends http.BaseClient {
   }
 }
 
+class DelayedLoginTokenStorage extends InMemoryTokenStorage {
+  Completer<void>? accessWriteStarted;
+  Completer<void>? accessWriteGate;
+
+  @override
+  Future<void> setTokens(String? accessToken, String? refreshToken) async {
+    await setAccessToken(accessToken);
+    final gate = accessWriteGate;
+    if (gate != null) {
+      accessWriteGate = null;
+      accessWriteStarted?.complete();
+      await gate.future;
+    }
+    await setRefreshToken(refreshToken);
+  }
+}
+
+class TrackingCloudWorkoutSync extends CloudWorkoutSync {
+  TrackingCloudWorkoutSync({
+    required super.apiClient,
+    required super.authService,
+    required super.appDb,
+  });
+
+  final Completer<void> started = Completer<void>();
+  final Completer<void> finished = Completer<void>();
+
+  @override
+  Future<void> processSyncQueue(Database db) async {
+    if (!started.isCompleted) started.complete();
+    try {
+      await super.processSyncQueue(db);
+    } finally {
+      if (!finished.isCompleted) finished.complete();
+    }
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -111,7 +173,7 @@ void main() {
   late Directory tempDir;
   late GatedDatabaseFactory factory;
   late AppDb appDb;
-  late InMemoryTokenStorage storage;
+  late DelayedLoginTokenStorage storage;
   late ApiClient apiClient;
   late AuthService authService;
   late LoginHttpClient httpClient;
@@ -122,7 +184,7 @@ void main() {
     factory = GatedDatabaseFactory(databaseFactoryFfi);
 
     appDb = ControlledAppDb(factory);
-    storage = InMemoryTokenStorage();
+    storage = DelayedLoginTokenStorage();
     httpClient = LoginHttpClient();
     await storage.setTokens('access-A', 'refresh-A');
     await storage.setUserId('A');
@@ -145,13 +207,13 @@ void main() {
     await tempDir.delete(recursive: true);
   });
 
-  void enqueueLogin(String accountId) {
+  void enqueueLogin(String accountId, {int statusCode = 200}) {
     httpClient.enqueue('POST', '/api/auth/login', {
       'accessToken': 'access-$accountId',
       'refreshToken': 'refresh-$accountId',
       'userId': accountId,
       'email': '$accountId@example.com',
-    });
+    }, statusCode: statusCode);
   }
 
   test(
@@ -317,4 +379,184 @@ void main() {
       expect(await WorkoutRepo(appDb.db).listWorkouts(), isEmpty);
     },
   );
+
+  test(
+    'a failed overlapping login cannot leave delayed B token writes active',
+    () async {
+      final workoutA = await WorkoutRepo(appDb.db).createWorkout(
+        title: 'Private A',
+        date: DateTime(2026, 11, 6),
+        start: false,
+      );
+      final writeGate = Completer<void>();
+      storage.accessWriteStarted = Completer<void>();
+      storage.accessWriteGate = writeGate;
+
+      enqueueLogin('B');
+      final loginB = authService.login('b@example.com', 'password');
+      await storage.accessWriteStarted!.future;
+
+      enqueueLogin('C', statusCode: 401);
+      httpClient.loginResponseDelivered = Completer<void>();
+      final loginC = authService.login('c@example.com', 'wrong-password');
+      await httpClient.loginResponseDelivered!.future;
+      writeGate.complete();
+
+      await expectLater(loginB, throwsA(isA<SessionAbortedException>()));
+      await expectLater(loginC, throwsA(isA<ApiException>()));
+
+      expect(authService.isAuthenticated, isFalse);
+      expect(authService.user, isNull);
+      expect(apiClient.sessionAccountId, isNull);
+      expect(appDb.currentUserId, isNull);
+      expect(await storage.getAccessToken(), isNull);
+      expect(await storage.getRefreshToken(), isNull);
+      expect(authService.errorMessage, contains('войдите снова'));
+
+      await apiClient.request(method: 'GET', endpoint: '/api/protected');
+      final protectedRequest = httpClient.requests.last;
+      expect(protectedRequest.url.path, '/api/protected');
+      expect(protectedRequest.headers.containsKey('authorization'), isFalse);
+
+      final databaseA = await openLiftlineDb(
+        '${tempDir.path}/liftline_user_A.db',
+        factory: databaseFactoryFfi,
+      );
+      expect(
+        (await WorkoutRepo(databaseA).listWorkouts()).map((w) => w['id']),
+        contains(workoutA),
+      );
+      await databaseA.close();
+    },
+  );
+
+  test(
+    'background sync pauses while B opens and does not upload A queue with B tokens',
+    () async {
+      final workoutA = await WorkoutRepo(appDb.db).createWorkout(
+        title: 'Private A',
+        date: DateTime(2026, 11, 6),
+        start: false,
+      );
+      final gateB = Completer<void>();
+      factory.openGates['B'] = gateB;
+      factory.openStarted['B'] = Completer<void>();
+      enqueueLogin('B');
+
+      final loginB = authService.login('b@example.com', 'password');
+      await factory.openStarted['B']!.future;
+      expect(apiClient.sessionAccountId, 'B');
+      expect(await storage.getAccessToken(), 'access-B');
+      expect(appDb.currentUserId, 'A');
+
+      final syncEngine = CloudWorkoutSync(
+        apiClient: apiClient,
+        authService: authService,
+        appDb: appDb,
+      );
+      final runner = SyncQueueRunner.isolated(
+        authService: authService,
+        syncEngine: syncEngine,
+        appDb: appDb,
+      );
+      runner.scheduleSync(immediate: true);
+      await syncEngine.processSyncQueue(appDb.db);
+
+      expect(
+        httpClient.requests.where(
+          (request) => request.url.path.startsWith('/api/workouts'),
+        ),
+        isEmpty,
+      );
+      expect(await appDb.db.query('sync_queue'), hasLength(1));
+      expect(
+        (await appDb.db.query('workouts')).single['sync_status'],
+        'pending',
+      );
+
+      gateB.complete();
+      await loginB;
+      runner.dispose();
+
+      expect(authService.isAuthenticated, isTrue);
+      expect(apiClient.sessionAccountId, 'B');
+      expect(appDb.currentUserId, 'B');
+      expect(await appDb.db.query('sync_queue'), isEmpty);
+
+      final databaseA = await openLiftlineDb(
+        '${tempDir.path}/liftline_user_A.db',
+        factory: databaseFactoryFfi,
+      );
+      expect(
+        (await WorkoutRepo(databaseA).listWorkouts()).map((w) => w['id']),
+        contains(workoutA),
+      );
+      expect(await databaseA.query('sync_queue'), hasLength(1));
+      await databaseA.close();
+    },
+  );
+
+  test('in-flight A sync response is discarded after switching to B', () async {
+    final workoutA = await WorkoutRepo(appDb.db).createWorkout(
+      title: 'Private A',
+      date: DateTime(2026, 11, 6),
+      start: false,
+    );
+    final responseGate = Completer<void>();
+    httpClient.workoutRequestStarted = Completer<void>();
+    httpClient.workoutResponseGate = responseGate;
+    final syncEngine = TrackingCloudWorkoutSync(
+      apiClient: apiClient,
+      authService: authService,
+      appDb: appDb,
+    );
+    final runner = SyncQueueRunner.isolated(
+      authService: authService,
+      syncEngine: syncEngine,
+      appDb: appDb,
+    );
+    runner.scheduleSync(immediate: true);
+    await syncEngine.started.future;
+    await httpClient.workoutRequestStarted!.future;
+    expect(
+      httpClient.requests.last.headers.keys.any(
+        (key) => key.toLowerCase() == 'authorization',
+      ),
+      isTrue,
+    );
+
+    final gateB = Completer<void>();
+    factory.openGates['B'] = gateB;
+    factory.openStarted['B'] = Completer<void>();
+    enqueueLogin('B');
+    final loginB = authService.login('b@example.com', 'password');
+    await factory.openStarted['B']!.future;
+
+    responseGate.complete();
+    await syncEngine.finished.future;
+    runner.dispose();
+    final queueAWhileOpening = await appDb.db.query('sync_queue');
+    expect(queueAWhileOpening, hasLength(1));
+    expect((await appDb.db.query('workouts')).single['sync_status'], 'pending');
+
+    gateB.complete();
+    await loginB;
+    expect(appDb.currentUserId, 'B');
+    expect(await appDb.db.query('sync_queue'), isEmpty);
+
+    final databaseA = await openLiftlineDb(
+      '${tempDir.path}/liftline_user_A.db',
+      factory: databaseFactoryFfi,
+    );
+    expect(
+      (await WorkoutRepo(databaseA).listWorkouts()).map((w) => w['id']),
+      contains(workoutA),
+    );
+    expect(await databaseA.query('sync_queue'), hasLength(1));
+    expect(
+      (await databaseA.query('workouts')).single['sync_status'],
+      'pending',
+    );
+    await databaseA.close();
+  });
 }

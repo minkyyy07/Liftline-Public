@@ -58,6 +58,15 @@ class TokenSessionSnapshot {
         email != null &&
         email!.isNotEmpty;
   }
+
+  bool matches(TokenSessionSnapshot other) {
+    return accountId == other.accountId &&
+        accessToken == other.accessToken &&
+        refreshToken == other.refreshToken &&
+        userId == other.userId &&
+        email == other.email &&
+        displayName == other.displayName;
+  }
 }
 
 class ApiClient {
@@ -68,15 +77,17 @@ class ApiClient {
   String _baseUrl;
   final TokenStorage tokenStorage;
   final http.Client _client;
-  void Function()? onSessionExpired;
+  FutureOr<void> Function()? onSessionExpired;
 
   int _sessionGeneration = 0;
   String? _sessionAccountId;
   bool _sessionTransitionPending = false;
   Future<void> _tokenOperationQueue = Future<void>.value();
+  TokenSessionSnapshot? _committedTokenSession;
 
   int get sessionGeneration => _sessionGeneration;
   String? get sessionAccountId => _sessionAccountId;
+  bool get isSessionTransitionPending => _sessionTransitionPending;
 
   /// Updates the active session generation and account ID.
   /// Cancels in-flight refreshes and prevents stale requests from mutating state.
@@ -85,6 +96,7 @@ class ApiClient {
     _sessionAccountId = newAccountId;
     _sessionTransitionPending = false;
     _refreshCompleter = null;
+    if (newAccountId == null) _committedTokenSession = null;
   }
 
   int reserveSessionChange() {
@@ -92,6 +104,33 @@ class ApiClient {
     _sessionTransitionPending = true;
     _refreshCompleter = null;
     return _sessionGeneration;
+  }
+
+  bool completeSessionChange({
+    required int expectedGeneration,
+    required String? accountId,
+  }) {
+    if (!isCurrentSession(accountId, expectedGeneration) ||
+        !_sessionTransitionPending) {
+      return false;
+    }
+    _sessionTransitionPending = false;
+    return true;
+  }
+
+  bool adoptStoredSession({
+    required int expectedGeneration,
+    required String? accountId,
+    required TokenSessionSnapshot snapshot,
+  }) {
+    if (_sessionGeneration != expectedGeneration ||
+        !_sessionTransitionPending) {
+      return false;
+    }
+    _sessionAccountId = accountId;
+    _committedTokenSession = snapshot;
+    _refreshCompleter = null;
+    return true;
   }
 
   Future<bool?> cancelSessionChange(int expectedGeneration) {
@@ -106,15 +145,31 @@ class ApiClient {
       final refreshToken = await tokenStorage.getRefreshToken();
       final storedAccountId = await tokenStorage.getUserId();
       final email = await tokenStorage.getUserEmail();
-      if (accountId == null &&
+      final displayName = await tokenStorage.getUserDisplayName();
+      final storedSnapshot = TokenSessionSnapshot(
+        accountId: storedAccountId,
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        userId: storedAccountId,
+        email: email,
+        displayName: displayName,
+      );
+      final committedSnapshot = _committedTokenSession;
+      if (committedSnapshot != null &&
+          accountId == committedSnapshot.accountId &&
+          committedSnapshot.matches(storedSnapshot)) {
+        return true;
+      }
+      if (committedSnapshot == null &&
+          accountId == null &&
           accessToken == null &&
           refreshToken == null &&
           storedAccountId == null &&
           email == null) {
-        _sessionTransitionPending = false;
         return true;
       }
-      if (accountId != null &&
+      if (committedSnapshot == null &&
+          accountId != null &&
           accessToken != null &&
           accessToken.isNotEmpty &&
           refreshToken != null &&
@@ -122,13 +177,14 @@ class ApiClient {
           storedAccountId == accountId &&
           email != null &&
           email.isNotEmpty) {
-        _sessionTransitionPending = false;
         return true;
       }
 
       await tokenStorage.clearAll();
       if (_sessionGeneration != expectedGeneration) return null;
       switchSession(null);
+      _committedTokenSession = null;
+      _sessionTransitionPending = true;
       return false;
     });
   }
@@ -168,6 +224,11 @@ class ApiClient {
   }) {
     return _withTokenOperation(() async {
       if (_sessionGeneration != expectedGeneration) return null;
+      final committedSnapshot = _committedTokenSession;
+      if (committedSnapshot != null &&
+          committedSnapshot.accountId == _sessionAccountId) {
+        return committedSnapshot;
+      }
       final snapshot = TokenSessionSnapshot(
         accountId: _sessionAccountId,
         accessToken: await tokenStorage.getAccessToken(),
@@ -206,7 +267,9 @@ class ApiClient {
       }
 
       if (!isCurrentSession(accountId, generation)) return null;
-      switchSession(snapshot.accountId);
+      _sessionAccountId = snapshot.accountId;
+      _committedTokenSession = snapshot;
+      _refreshCompleter = null;
       return _sessionGeneration;
     });
   }
@@ -234,8 +297,45 @@ class ApiClient {
       await tokenStorage.setUserDisplayName(displayName);
       if (_sessionGeneration != expectedGeneration) return null;
 
-      switchSession(accountId);
+      _sessionAccountId = accountId;
+      _committedTokenSession = TokenSessionSnapshot(
+        accountId: accountId,
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        userId: accountId,
+        email: email,
+        displayName: displayName,
+      );
+      _refreshCompleter = null;
       return _sessionGeneration;
+    });
+  }
+
+  Future<bool> updateDisplayNameForSession({
+    required String accountId,
+    required int generation,
+    required String? displayName,
+  }) {
+    return _withTokenOperation(() async {
+      if (!isCurrentSession(accountId, generation) ||
+          _sessionTransitionPending) {
+        return false;
+      }
+      await tokenStorage.setUserDisplayName(displayName);
+      final committedSnapshot = _committedTokenSession;
+      if (committedSnapshot != null &&
+          committedSnapshot.accountId == accountId) {
+        _committedTokenSession = TokenSessionSnapshot(
+          accountId: accountId,
+          accessToken: committedSnapshot.accessToken,
+          refreshToken: committedSnapshot.refreshToken,
+          userId: committedSnapshot.userId,
+          email: committedSnapshot.email,
+          displayName: displayName,
+        );
+      }
+      return isCurrentSession(accountId, generation) &&
+          !_sessionTransitionPending;
     });
   }
 
@@ -250,9 +350,15 @@ class ApiClient {
       await tokenStorage.clearAll();
       if (!isCurrentSession(accountId, generation)) return null;
 
-      if (notifyExpired) onSessionExpired?.call();
-      if (isCurrentSession(accountId, generation)) switchSession(null);
-      return _sessionGeneration;
+      switchSession(null);
+      _committedTokenSession = null;
+      _sessionTransitionPending = true;
+      final endedGeneration = _sessionGeneration;
+      if (notifyExpired) await onSessionExpired?.call();
+      if (isCurrentSession(null, endedGeneration)) {
+        _sessionTransitionPending = false;
+      }
+      return endedGeneration;
     });
   }
 
@@ -354,6 +460,19 @@ class ApiClient {
         final committed = await _withTokenOperation(() async {
           if (!isCurrentSession(accountId, generation)) return false;
           await tokenStorage.setTokens(newAccess, newRefresh);
+          final previousSnapshot = _committedTokenSession;
+          if (_sessionAccountId == accountId &&
+              previousSnapshot != null &&
+              previousSnapshot.accountId == accountId) {
+            _committedTokenSession = TokenSessionSnapshot(
+              accountId: accountId,
+              accessToken: newAccess,
+              refreshToken: newRefresh,
+              userId: previousSnapshot.userId,
+              email: previousSnapshot.email,
+              displayName: previousSnapshot.displayName,
+            );
+          }
           return isCurrentSession(accountId, generation);
         });
         if (!committed) {
@@ -399,11 +518,17 @@ class ApiClient {
 
     final isAuthEntryPoint =
         endpoint == '/api/auth/login' || endpoint == '/api/auth/register';
+    if (!isAuthEntryPoint && _sessionTransitionPending) {
+      throw SessionAbortedException();
+    }
     final token =
         isAuthEntryPoint
             ? null
             : await _withTokenOperation(() async {
               if (!isCurrentSession(reqAccountId, reqGeneration)) {
+                throw SessionAbortedException();
+              }
+              if (!isAuthEntryPoint && _sessionTransitionPending) {
                 throw SessionAbortedException();
               }
               final accessToken = await tokenStorage.getAccessToken();

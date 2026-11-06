@@ -50,9 +50,17 @@ class AuthService extends ChangeNotifier {
   TokenStorage get tokenStorage => _tokenStorage;
 
   AuthUser? _user;
-  AuthUser? get user => _user;
-  bool get isAuthenticated => _user != null;
-  bool get isGuest => _user == null;
+  AuthUser? get user => isAuthenticated ? _user : null;
+  bool get isAuthenticated {
+    final activeUser = _user;
+    return activeUser != null &&
+        !_apiClient.isSessionTransitionPending &&
+        _apiClient.sessionAccountId == activeUser.id &&
+        _db.currentUserId == activeUser.id &&
+        _db.isOpen;
+  }
+
+  bool get isGuest => !isAuthenticated;
 
   bool _isLoading = false;
   bool get isLoading => _isLoading;
@@ -60,36 +68,91 @@ class AuthService extends ChangeNotifier {
   String? _errorMessage;
   String? get errorMessage => _errorMessage;
 
-  void _handleSessionExpired() {
-    _apiClient.switchSession(null);
+  Future<void> _handleSessionExpired() async {
     _user = null;
-    _db.switchToUser(null);
     notifyListeners();
+    try {
+      await _db.switchToUser(null);
+    } catch (_) {
+      await _db.deactivate();
+    }
   }
 
   Future<void> init() async {
+    final initGeneration = _apiClient.reserveSessionChange();
     _isLoading = true;
     notifyListeners();
     try {
       await _apiClient.init();
+      final accessToken = await _tokenStorage.getAccessToken();
       final refreshToken = await _tokenStorage.getRefreshToken();
       final userId = await _tokenStorage.getUserId();
       final email = await _tokenStorage.getUserEmail();
       final displayName = await _tokenStorage.getUserDisplayName();
+      if (_apiClient.sessionGeneration != initGeneration) return;
 
-      if (refreshToken != null && userId != null && email != null) {
+      if (accessToken != null &&
+          accessToken.isNotEmpty &&
+          refreshToken != null &&
+          refreshToken.isNotEmpty &&
+          userId != null &&
+          userId.isNotEmpty &&
+          email != null &&
+          email.isNotEmpty) {
+        if (!_apiClient.adoptStoredSession(
+          expectedGeneration: initGeneration,
+          accountId: userId,
+          snapshot: TokenSessionSnapshot(
+            accountId: userId,
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            userId: userId,
+            email: email,
+            displayName: displayName,
+          ),
+        )) {
+          return;
+        }
         _user = AuthUser(id: userId, email: email, displayName: displayName);
-        _apiClient.switchSession(userId);
         await _db.switchToUser(userId);
+        if (!_apiClient.isCurrentSession(userId, initGeneration) ||
+            !_db.isOpen ||
+            _db.currentUserId != userId) {
+          throw StateError('Не удалось согласовать сессию и базу аккаунта.');
+        }
+        _apiClient.completeSessionChange(
+          expectedGeneration: initGeneration,
+          accountId: userId,
+        );
       } else {
+        final endedGeneration = await _apiClient.clearSessionIfCurrent(
+          accountId: _apiClient.sessionAccountId,
+          generation: initGeneration,
+        );
+        if (endedGeneration == null) return;
         _user = null;
-        _apiClient.switchSession(null);
-        await _db.switchToUser(null);
+        await _switchToGuestFailClosed();
+        _apiClient.completeSessionChange(
+          expectedGeneration: endedGeneration,
+          accountId: null,
+        );
       }
-    } catch (_) {
-      _user = null;
-      _apiClient.switchSession(null);
-      await _db.switchToUser(null);
+    } catch (e) {
+      if (_apiClient.sessionGeneration == initGeneration) {
+        final endedGeneration = await _apiClient.clearSessionIfCurrent(
+          accountId: _apiClient.sessionAccountId,
+          generation: initGeneration,
+        );
+        if (endedGeneration != null) {
+          _user = null;
+          await _switchToGuestFailClosed();
+          _apiClient.completeSessionChange(
+            expectedGeneration: endedGeneration,
+            accountId: null,
+          );
+        }
+        _errorMessage = e.toString();
+      }
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -118,14 +181,14 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> login(String email, String password) async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
     final previousUser = _user;
     final previousDatabaseUserId = _db.currentUserId;
     final previousDatabaseEpoch = _db.accountEpoch;
     final previousDatabaseWasOpen = _db.isOpen;
     final loginGeneration = _apiClient.reserveSessionChange();
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
     String? committedAccountId;
     int? committedGeneration;
     TokenSessionSnapshot? previousTokenSession;
@@ -150,6 +213,9 @@ class AuthService extends ChangeNotifier {
       final userId = res['userId'] as String? ?? '';
       final userEmail = res['email'] as String? ?? email.trim().toLowerCase();
       final displayName = res['displayName'] as String?;
+      if (accessToken.isEmpty || userId.isEmpty || userEmail.isEmpty) {
+        throw const FormatException('Ответ входа не содержит данные сессии.');
+      }
 
       previousTokenSession = await _apiClient.captureTokenSession(
         expectedGeneration: loginGeneration,
@@ -165,13 +231,20 @@ class AuthService extends ChangeNotifier {
       if (committedGeneration == null) throw SessionAbortedException();
       committedAccountId = userId;
 
-      _user = AuthUser(id: userId, email: userEmail, displayName: displayName);
-
       // Switch active database to this user's isolated database
       await _db.switchToUser(userId);
-      if (!_apiClient.isCurrentSession(userId, committedGeneration)) {
+      if (!_apiClient.isCurrentSession(userId, committedGeneration) ||
+          !_db.isOpen ||
+          _db.currentUserId != userId) {
         throw SessionAbortedException();
       }
+      if (!_apiClient.completeSessionChange(
+        expectedGeneration: committedGeneration,
+        accountId: userId,
+      )) {
+        throw SessionAbortedException();
+      }
+      _user = AuthUser(id: userId, email: userEmail, displayName: displayName);
     } catch (e) {
       if (committedAccountId != null && committedGeneration != null) {
         var restoredPreviousSession = false;
@@ -193,6 +266,10 @@ class AuthService extends ChangeNotifier {
               _apiClient.isCurrentSession(
                 snapshot.accountId,
                 restoredGeneration,
+              ) &&
+              _apiClient.completeSessionChange(
+                expectedGeneration: restoredGeneration,
+                accountId: snapshot.accountId,
               )) {
             _user = previousUser;
             restoredPreviousSession = true;
@@ -208,6 +285,10 @@ class AuthService extends ChangeNotifier {
               _apiClient.isCurrentSession(null, endedGeneration)) {
             _user = null;
             await _switchToGuestFailClosed();
+            _apiClient.completeSessionChange(
+              expectedGeneration: endedGeneration,
+              accountId: null,
+            );
             sessionEnded = true;
           }
         }
@@ -215,10 +296,44 @@ class AuthService extends ChangeNotifier {
         final retainedSession = await _apiClient.cancelSessionChange(
           loginGeneration,
         );
-        if (retainedSession == false && _apiClient.sessionAccountId == null) {
-          _user = null;
-          await _switchToGuestFailClosed();
-          sessionEnded = true;
+        if (retainedSession != null) {
+          final currentAccountId = _apiClient.sessionAccountId;
+          final currentGeneration = _apiClient.sessionGeneration;
+          final sessionIsAligned =
+              retainedSession &&
+              currentAccountId == previousUser?.id &&
+              currentAccountId == previousDatabaseUserId &&
+              _db.isOpen &&
+              _db.isCurrentAccount(
+                previousDatabaseUserId,
+                previousDatabaseEpoch,
+              );
+          if (sessionIsAligned) {
+            _apiClient.completeSessionChange(
+              expectedGeneration: currentGeneration,
+              accountId: currentAccountId,
+            );
+          } else {
+            int? endedGeneration;
+            if (retainedSession) {
+              endedGeneration = await _apiClient.clearSessionIfCurrent(
+                accountId: currentAccountId,
+                generation: currentGeneration,
+              );
+            } else {
+              endedGeneration = currentGeneration;
+            }
+            if (endedGeneration != null &&
+                _apiClient.isCurrentSession(null, endedGeneration)) {
+              _user = null;
+              await _switchToGuestFailClosed();
+              _apiClient.completeSessionChange(
+                expectedGeneration: endedGeneration,
+                accountId: null,
+              );
+              sessionEnded = true;
+            }
+          }
         }
       }
       _errorMessage =
@@ -242,6 +357,8 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    final transitionWasPending = _apiClient.isSessionTransitionPending;
+    if (transitionWasPending) _apiClient.reserveSessionChange();
     _isLoading = true;
     notifyListeners();
     final accountId = _apiClient.sessionAccountId;
@@ -275,12 +392,18 @@ class AuthService extends ChangeNotifier {
         _apiClient.isCurrentSession(null, endedGeneration)) {
       _user = null;
       await _switchToGuestFailClosed();
+      _apiClient.completeSessionChange(
+        expectedGeneration: endedGeneration,
+        accountId: null,
+      );
     }
     _isLoading = false;
     notifyListeners();
   }
 
   Future<void> logoutAll() async {
+    final transitionWasPending = _apiClient.isSessionTransitionPending;
+    if (transitionWasPending) _apiClient.reserveSessionChange();
     _isLoading = true;
     notifyListeners();
     final accountId = _apiClient.sessionAccountId;
@@ -302,6 +425,10 @@ class AuthService extends ChangeNotifier {
         _apiClient.isCurrentSession(null, endedGeneration)) {
       _user = null;
       await _switchToGuestFailClosed();
+      _apiClient.completeSessionChange(
+        expectedGeneration: endedGeneration,
+        accountId: null,
+      );
     }
     _isLoading = false;
     notifyListeners();
@@ -322,7 +449,14 @@ class AuthService extends ChangeNotifier {
               as Map<String, dynamic>;
 
       final updatedName = res['displayName'] as String?;
-      await _tokenStorage.setUserDisplayName(updatedName);
+      final accountId = _apiClient.sessionAccountId;
+      final generation = _apiClient.sessionGeneration;
+      final saved = await _apiClient.updateDisplayNameForSession(
+        accountId: accountId ?? '',
+        generation: generation,
+        displayName: updatedName,
+      );
+      if (!saved) throw SessionAbortedException();
       if (_user != null) {
         _user = AuthUser(
           id: _user!.id,
@@ -365,6 +499,10 @@ class AuthService extends ChangeNotifier {
           _apiClient.isCurrentSession(null, endedGeneration)) {
         _user = null;
         await _switchToGuestFailClosed();
+        _apiClient.completeSessionChange(
+          expectedGeneration: endedGeneration,
+          accountId: null,
+        );
       }
     } catch (e) {
       _errorMessage = e.toString();

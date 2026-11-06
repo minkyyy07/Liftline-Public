@@ -92,8 +92,27 @@ class ControlledHttpClient extends http.BaseClient {
 class NoopAppDb extends AppDb {
   NoopAppDb() : super.isolated();
 
+  String? _testUserId;
+  int _testEpoch = 0;
+
   @override
-  Future<void> switchToUser(String? userId, {DatabaseFactory? factory}) async {}
+  String? get currentUserId => _testUserId;
+
+  @override
+  int get accountEpoch => _testEpoch;
+
+  @override
+  bool get isOpen => true;
+
+  @override
+  bool isCurrentAccount(String? expectedUserId, int expectedEpoch) =>
+      _testUserId == expectedUserId && _testEpoch == expectedEpoch;
+
+  @override
+  Future<void> switchToUser(String? userId, {DatabaseFactory? factory}) async {
+    _testUserId = userId;
+    _testEpoch++;
+  }
 }
 
 Future<int?> commitSession(
@@ -112,6 +131,12 @@ Future<int?> commitSession(
     email: '$accountId@example.com',
     displayName: accountId,
   );
+  if (committed != null) {
+    apiClient.completeSessionChange(
+      expectedGeneration: committed,
+      accountId: accountId,
+    );
+  }
   return committed;
 }
 
